@@ -1,0 +1,25 @@
+{
+  // Server-side code: Netlify functions, edge functions, shared libraries,
+  // database, scripts and tests. Runs on Node (functions, scripts, tests) or
+  // Deno (edge functions); shared code only uses web-standard APIs.
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.server.tsbuildinfo",
+    "target": "es2023",
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "skipLibCheck": true,
+
+    "module": "nodenext",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["netlify", "lib", "db", "scripts", "tests"]
+}

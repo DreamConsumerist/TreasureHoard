@@ -1,0 +1,25 @@
+[build]
+  command = "npm run build"
+  publish = "dist"              # Vite's output folder
+
+[build.environment]
+  NODE_VERSION = "24"           # match local development
+
+[functions]
+  directory = "netlify/functions"
+
+# Local development: `npm run dev` runs `netlify dev`, which starts Vite
+# (via the `vite` script) and proxies it on port 8888 together with the
+# functions, edge functions and the local database.
+[dev]
+  command = "npm run vite"
+  targetPort = 5173
+  port = 8888
+  publish = "public"            # never look at dist/ (see below)
+
+# The SPA fallback (/* → /index.html) is NOT defined here. A Vite plugin
+# (vite.config.ts) writes it to dist/_redirects during production builds.
+# Defined here, or present in the folder `netlify dev` treats as static, it
+# rewrote Vite's dev-only module requests (/src/*.tsx, /@vite/client) to
+# index.html and broke the app locally. Vite's dev server does its own SPA
+# fallback, so development doesn't need the rule.
