@@ -9,3 +9,6 @@ import type { PgAsyncDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core'
 import type * as schema from './schema.ts'
 
 export type Db = PgAsyncDatabase<PgQueryResultHKT, typeof schema>
+
+/** A database handle inside db.transaction(). */
+export type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]

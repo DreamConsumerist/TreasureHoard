@@ -7,7 +7,10 @@ import './index.css'
 import { AppShell } from './components/AppShell.tsx'
 import AccountRegister from './routes/AccountRegister.tsx'
 import AccountsPage from './routes/AccountsPage.tsx'
+import Collection from './routes/Collection.tsx'
+import CollectionNew from './routes/CollectionNew.tsx'
 import Dashboard from './routes/Dashboard.tsx'
+import ItemPage from './routes/ItemPage.tsx'
 import Login from './routes/Login.tsx'
 import Register from './routes/Register.tsx'
 import Settings from './routes/Settings.tsx'
@@ -30,6 +33,9 @@ const router = createBrowserRouter([
       { path: '/ledger/accounts', element: <AccountsPage /> },
       { path: '/ledger/accounts/:id', element: <AccountRegister /> },
       { path: '/ledger/:id', element: <TransactionPage /> },
+      { path: '/collection', element: <Collection /> },
+      { path: '/collection/new', element: <CollectionNew /> },
+      { path: '/collection/:id', element: <ItemPage /> },
       { path: '/settings', element: <Settings /> },
     ],
   },

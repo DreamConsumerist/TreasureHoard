@@ -10,6 +10,8 @@ import { useAccounts } from '../lib/queries.ts'
  * ("Collection: Cards"). Native selects are keyboard-searchable on desktop
  * and use the phone's own picker on mobile. Archived accounts are hidden,
  * except the currently selected one (so editing an old transaction still shows it).
+ * The Collection's accounts are left out: only collection items move money
+ * in and out of them.
  */
 export function AccountPicker({
   value,
@@ -31,7 +33,7 @@ export function AccountPicker({
   'aria-label'?: string
   required?: boolean
 }) {
-  const { flat } = useAccounts()
+  const { flat, collectionIds } = useAccounts()
   return (
     <select
       {...rest}
@@ -49,6 +51,7 @@ export function AccountPicker({
           (a) =>
             a.type === type &&
             a.id !== excludeId &&
+            !collectionIds.has(a.id) &&
             (!a.archived || a.id === value),
         )
         if (options.length === 0) return null

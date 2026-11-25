@@ -5,6 +5,7 @@ import { Hono } from 'hono'
 import { z } from 'zod'
 import { accounts, postings, transactions } from '../../../db/schema.ts'
 import type { Db } from '../../../db/types.ts'
+import { collectionLedgerCents } from '../collection/common.ts'
 import { validate } from '../errors.ts'
 import { todayUtc } from './accounts.ts'
 import { listTransactions } from './transactions.ts'
@@ -65,20 +66,22 @@ export function dashboardRoutes(db: Db) {
         .groupBy(accounts.id, accounts.name)
         .orderBy(desc(sql`sum(${postings.amountCents})`))
 
-    const [current, previous, recent] = await Promise.all([
+    const [current, previous, recent, collectionCostCents] = await Promise.all([
       spendingBetween(thisMonth, nextMonth),
       spendingBetween(lastMonth, thisMonth),
       listTransactions(db, { limit: 8 }),
+      collectionLedgerCents(db),
     ])
     const sum = (rows: { cents: number }[]) =>
       rows.reduce((s, r) => s + r.cents, 0)
 
     return c.json({
       // Assets minus liabilities. Liabilities are stored negative (credits), so it's a sum.
-      // Step 3 counts the Collection here at cost; Step 4 adds the market-value view.
+      // Includes the Collection at cost; Step 4 adds the market-value view.
       bookNetWorthCents: total('asset') + total('liability'),
-      // For now every asset account is cash. Step 3 excludes the Collection accounts.
-      cashCents: total('asset'),
+      // Cash = every asset account except the Collection.
+      cashCents: total('asset') - collectionCostCents,
+      collectionCostCents,
       spending: {
         thisMonthCents: sum(current),
         lastMonthCents: sum(previous),

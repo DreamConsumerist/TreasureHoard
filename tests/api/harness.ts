@@ -10,12 +10,19 @@ import { createSessionToken, SESSION_COOKIE } from '../../lib/auth/session.ts'
 
 const SECRET = 'test-secret-that-is-long-enough-for-hmac'
 
-export async function createTestApi() {
+export async function createTestApi(options: { fetch?: typeof fetch } = {}) {
   process.env.SESSION_SECRET = SECRET
   const client = new PGlite()
   const db = drizzle({ client, schema })
   await migrate(db, { migrationsFolder: 'netlify/database/migrations' })
-  const app = createApp(db)
+  // Tests never reach the network: external calls go to the given fake, or fail.
+  const app = createApp(db, {
+    fetch:
+      options.fetch ??
+      (async () => {
+        throw new Error('Unexpected network call in a test')
+      }),
+  })
   const cookie = `${SESSION_COOKIE}=${await createSessionToken(SECRET)}`
 
   /** Sends a request as a logged-in user; returns status and parsed JSON body. */

@@ -1,0 +1,1 @@
+ALTER TABLE "game_details" ADD COLUMN "image_url" text;

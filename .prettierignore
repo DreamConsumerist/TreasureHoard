@@ -4,3 +4,6 @@ package-lock.json
 netlify/database/migrations
 .netlify
 *.md
+
+# Saved third-party pages used as test fixtures: keep them exactly as fetched.
+tests/fixtures/

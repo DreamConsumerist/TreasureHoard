@@ -167,7 +167,14 @@ function EditAccountForm({
   const update = useUpdateAccount()
   const del = useDeleteAccount()
   const error = update.error ?? del.error
-  const showOpening = account.type === 'asset' || account.type === 'liability'
+  const { collectionIds, byId } = useAccounts()
+  const byParentPath =
+    account.parentId === null ? null : byId.get(account.parentId)?.path
+  const inCollection = collectionIds.has(account.id)
+  const system = account.systemKey !== null
+  // The Collection's balance comes from its items, so it has no starting balance.
+  const showOpening =
+    (account.type === 'asset' || account.type === 'liability') && !inCollection
   // Blank means no opening balance (0 removes an existing one).
   const openingCents = opening.trim() ? parseMoney(opening) : 0
   const openingChanged =
@@ -205,14 +212,22 @@ function EditAccountForm({
         </label>
         <label className="block space-y-1">
           <span className="label">Parent</span>
-          <AccountPicker
-            value={parentId}
-            onChange={setParentId}
-            types={[account.type]}
-            excludeId={account.id}
-            allowNone
-            placeholder="None (top level)"
-          />
+          {/* Accounts the app relies on stay where they are. */}
+          {system ? (
+            <p className="input text-zinc-500">
+              {account.parentId === null ? 'Top level' : (byParentPath ?? '')}{' '}
+              (fixed)
+            </p>
+          ) : (
+            <AccountPicker
+              value={parentId}
+              onChange={setParentId}
+              types={[account.type]}
+              excludeId={account.id}
+              allowNone
+              placeholder="None (top level)"
+            />
+          )}
         </label>
         {showOpening && (
           <>
@@ -247,18 +262,20 @@ function EditAccountForm({
       {error && <p className="text-sm text-red-600">{error.message}</p>}
       <div className="flex flex-wrap justify-between gap-2">
         <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() =>
-              update.mutate(
-                { id: account.id, archived: !account.archived },
-                { onSuccess: onDone },
-              )
-            }
-            className="btn"
-          >
-            {account.archived ? 'Unarchive' : 'Archive'}
-          </button>
+          {(!system || account.archived) && (
+            <button
+              type="button"
+              onClick={() =>
+                update.mutate(
+                  { id: account.id, archived: !account.archived },
+                  { onSuccess: onDone },
+                )
+              }
+              className="btn"
+            >
+              {account.archived ? 'Unarchive' : 'Archive'}
+            </button>
+          )}
           {!account.systemKey && (
             <button
               type="button"

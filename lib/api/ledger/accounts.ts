@@ -3,21 +3,19 @@
 import { and, eq, isNull, ne, or, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { accounts, postings, transactions } from '../../../db/schema.ts'
-import type { Db } from '../../../db/types.ts'
+import type { Db, Tx } from '../../../db/types.ts'
 import {
   accountCreateSchema,
   accountUpdateSchema,
 } from '../../ledger/schemas.ts'
 import { isDebitNormal, type AccountType } from '../../ledger/sign.ts'
+import { collectionAccountIds } from '../collection/common.ts'
 import { fail, idParam, validate } from '../errors.ts'
 
 export const OPENING_BALANCES_KEY = 'opening_balances'
 
 /** UTC calendar date; only a fallback, since the client normally sends its local date. */
 export const todayUtc = () => new Date().toISOString().slice(0, 10)
-
-/** A database handle inside db.transaction(). */
-type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
 
 /**
  * Creates, updates or removes an account's fresh-start opening entry, so the
@@ -39,6 +37,12 @@ export async function setOpeningBalance(
   if (!opening) fail(500, 'Opening Balances account is missing')
   if (account.id === opening.id) {
     fail(400, "Opening Balances can't have an opening balance of its own")
+  }
+  if ((await collectionAccountIds(tx)).includes(account.id)) {
+    fail(
+      400,
+      'The Collection’s balance comes from its items. Add items instead.',
+    )
   }
 
   const [existing] = await tx
@@ -158,6 +162,9 @@ export function accountRoutes(db: Db) {
       if (!parent) fail(400, 'Parent account not found')
       if (parent.type !== input.type)
         fail(400, 'A sub-account must have the same type as its parent')
+      if ((await collectionAccountIds(db)).includes(parentId)) {
+        fail(400, 'The Collection’s accounts are managed by the app')
+      }
     }
 
     const created = await db.transaction(async (tx) => {
@@ -187,6 +194,27 @@ export function accountRoutes(db: Db) {
     const all = await db.select().from(accounts)
     const account = all.find((a) => a.id === id)
     if (!account) fail(404, 'Account not found')
+
+    // Accounts the app relies on can be renamed, but not archived (posting to
+    // archived accounts is blocked, which would break buying and selling) or
+    // moved (the Collection's structure is what the books depend on).
+    if (account.systemKey && input.archived === true) {
+      fail(400, 'This account is used by the app and can’t be archived')
+    }
+    if (
+      account.systemKey &&
+      input.parentId !== undefined &&
+      input.parentId !== account.parentId
+    ) {
+      fail(400, 'This account is used by the app and can’t be moved')
+    }
+    if (
+      input.parentId !== undefined &&
+      input.parentId !== null &&
+      (await collectionAccountIds(db)).includes(input.parentId)
+    ) {
+      fail(400, 'The Collection’s accounts are managed by the app')
+    }
 
     if (input.parentId !== undefined && input.parentId !== null) {
       const parent = all.find((a) => a.id === input.parentId)

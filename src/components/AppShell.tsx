@@ -9,7 +9,7 @@ import { TransactionForm } from './TransactionForm.tsx'
 const NAV = [
   { to: '/', label: 'Dashboard', end: true },
   { to: '/ledger', label: 'Ledger', end: false },
-  // Collection arrives in Step 3.
+  { to: '/collection', label: 'Collection', end: false },
 ]
 
 const sideLink = ({ isActive }: { isActive: boolean }) =>

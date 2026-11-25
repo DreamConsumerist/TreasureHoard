@@ -20,6 +20,9 @@ import {
   SESSION_MAX_AGE_SECONDS,
   verifySessionToken,
 } from '../auth/session.ts'
+import { catalogRoutes } from './collection/catalog.ts'
+import { checkRoutes } from './collection/check.ts'
+import { itemRoutes } from './collection/items.ts'
 import { handleError } from './errors.ts'
 import { accountRoutes } from './ledger/accounts.ts'
 import { dashboardRoutes } from './ledger/dashboard.ts'
@@ -27,7 +30,13 @@ import { transactionRoutes } from './ledger/transactions.ts'
 
 const FAILED_LOGIN_DELAY_MS = 1000
 
-export function createApp(db: Db) {
+/** Things the app reaches outside itself for; tests pass fakes. */
+export interface AppDeps {
+  fetch?: typeof fetch
+}
+
+export function createApp(db: Db, deps: AppDeps = {}) {
+  const fetchFn = deps.fetch ?? fetch
   const app = new Hono().basePath('/api')
   app.onError(handleError)
 
@@ -99,6 +108,11 @@ export function createApp(db: Db) {
   app.route('/accounts', accountRoutes(db))
   app.route('/transactions', transactionRoutes(db))
   app.route('/dashboard', dashboardRoutes(db))
+
+  // --- Collection ---
+  app.route('/catalog', catalogRoutes(fetchFn))
+  app.route('/items', itemRoutes(db))
+  app.route('/collection', checkRoutes(db))
 
   return app
 }

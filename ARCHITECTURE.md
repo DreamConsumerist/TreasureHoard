@@ -62,16 +62,16 @@ Rules:
 
 ### Inventory
 
-- **`items`**: `id`, `kind` (`card` | `sealed` | `game` | `hardware`), `name`, `quantity`, `condition`, `cost_basis_cents`, `basis_source` (`purchase` | `baseline`), `acquired_date`, `acquired_txn_id` (nullable → transactions), `sold_txn_id` (nullable → transactions), `notes`.
-- **`card_details`**: `item_id`, `tcgplayer_product_id`, `sub_type` (e.g. Normal, Foil; null for sealed), `set_name`. Used by both `card` and `sealed`.
-- **`game_details`**: `item_id`, `platform`, `pricecharting_url`, `variant` (`loose` | `cib` | `new`). Used by both `game` and `hardware`.
+- **`items`**: `id`, `kind` (`card` | `sealed` | `game` | `hardware`), `name`, `quantity`, `condition`, `cost_basis_cents` (total for the row), `basis_source` (`purchase` | `baseline`), `acquired_date`, `acquired_txn_id` (→ transactions; null only for a $0 basis, which books nothing), `sold_date` (what marks an item sold), `sold_txn_id` (null for a $0 giveaway of a $0 item), `sale_proceeds_cents`, `notes`. Both transaction links are `on delete restrict`.
+- **`card_details`**: `item_id`, `category_id` and `group_id` (TCGplayer game and set, so syncs fetch only owned sets), `tcgplayer_product_id`, `sub_type` (e.g. Normal, Foil), `set_name`, `number`, `rarity`, `image_url`. Used by both `card` and `sealed`.
+- **`game_details`**: `item_id`, `platform`, `pricecharting_url` (null = priced by hand), `variant` (`loose` | `cib` | `new`), `image_url` (the PriceCharting cover photo, saved when the item is added; null if none). Used by both `game` and `hardware`.
 - **`wishlist_items`** *(Step 6)*: product reference (`source`, `external_id`, `variant`), `target_price_cents`, `notes`.
 
 Collection scope: MTG, One Piece and Riftbound cards and sealed product (TCGCSV categories 1, 68, 89), plus video games, consoles and accessories (PriceCharting). No graded cards.
 
 ### Valuation
 
-- **`price_snapshots`**: `source` (`tcgcsv` | `pricecharting` | `manual`), `external_id`, `variant`, `price_cents`, `as_of`.
+- **`price_snapshots`**: `source` (`tcgcsv` | `pricecharting` | `manual`), `external_id` (TCGplayer product ID, PriceCharting URL path, or `item:<id>` for manual), `variant` (sub-type or loose/cib/new; `''` for manual), `price_cents`, `as_of`. Created in Step 3: the price seen when an item is added is its first snapshot.
   - Unique on (`source`, `external_id`, `variant`, `as_of`).
   - Keyed by **product**, not item, so multiple copies of the same product share one price history.
   - Append-only. Supports value-over-time charts and unrealized gain/loss against cost basis.
@@ -84,7 +84,7 @@ Collection scope: MTG, One Piece and Riftbound cards and sealed product (TCGCSV 
 - **Purchases are assets at cost:** debit Assets → Collection → (Cards | Sealed | Games | Hardware), credit the paying account.
 - **Sales:** proceeds to the receiving account, credit Collection for the cost basis, and the difference to Income → Realized Gains on Collection. Selling part of a quantity splits the item row and prorates the basis.
 - **Fresh-start baseline:** there are no purchase records for the existing collection, so items already owned are entered at their market value on the day they're added (`basis_source = baseline`). This happens through an opening-balance transaction (debit Collection, credit Equity → Opening Balances). Cash accounts likewise start at their current balances. Gains on baseline items are measured from that value. The app is for personal tracking, not taxes.
-- **Invariant:** the Collection account balance equals the summed cost basis of unsold items.
+- **Invariant:** the Collection account balance equals the summed cost basis of unsold items. It's kept by construction: every collection write updates the item and its transaction together; transactions linked to items can't be edited or deleted from the ledger (409); ordinary transactions can't post to Collection accounts; and the Collection accounts can't be archived, moved, nested under, or given a starting balance. `GET /api/collection/check` (shown in Settings) verifies it.
 - **Net worth comes in two forms:**
   - **book**: from the ledger, with the collection at cost
   - **market**: book − collection cost + collection market value
@@ -153,7 +153,8 @@ TreasureHoard/
 │  ├─ schema.ts                  # Drizzle table definitions (source of truth)
 │  └─ index.ts                   # Drizzle client
 ├─ lib/                          # pure logic, no Netlify dependencies
-│  ├─ api/                       # Hono app: createApp(db) + route modules (api.mts wraps it)
+│  ├─ api/                       # Hono app: createApp(db, { fetch }) + ledger/ and collection/ route modules
+│  ├─ collection/                # posting builders, price keys, Zod schemas, response types
 │  ├─ ledger/                    # money, signs, posting rules, account tree, Zod schemas, shared types
 │  ├─ pricing/tcgcsv.ts
 │  ├─ pricing/pricecharting.ts   # fetch + parse

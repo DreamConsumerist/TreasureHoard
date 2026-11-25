@@ -19,6 +19,8 @@ export interface TransactionOut {
   /** Only when listing one account: this transaction's net effect on it, and the balance after it. */
   accountAmountCents?: number
   runningBalanceCents?: number
+  /** Single-transaction reads only: the collection item this belongs to, if any. */
+  linkedItemId?: number | null
 }
 
 export interface TransactionPage {
@@ -29,6 +31,8 @@ export interface TransactionPage {
 export interface DashboardData {
   bookNetWorthCents: number
   cashCents: number
+  /** The Collection subtree's balance: the collection at cost. */
+  collectionCostCents: number
   spending: {
     thisMonthCents: number
     lastMonthCents: number

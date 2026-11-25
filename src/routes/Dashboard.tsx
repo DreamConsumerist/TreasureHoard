@@ -44,13 +44,22 @@ export default function Dashboard() {
 
       {data && (
         <>
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Stat
               label="Net worth (book)"
               cents={data.bookNetWorthCents}
               hint="Assets − liabilities"
             />
-            <Stat label="Cash" cents={data.cashCents} />
+            <Stat
+              label="Cash"
+              cents={data.cashCents}
+              hint="Excludes the collection"
+            />
+            <Stat
+              label="Collection (at cost)"
+              cents={data.collectionCostCents}
+              hint="Market value arrives with price syncing"
+            />
             <Stat
               label="Spent this month"
               cents={data.spending.thisMonthCents}

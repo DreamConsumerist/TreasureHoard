@@ -1,4 +1,4 @@
-// TanStack Query hooks for the ledger API. Components call these instead of
+// TanStack Query hooks for the API (ledger and collection). Components call these instead of
 // fetching directly, so caching, loading/error state and refetch-after-save are
 // handled in one place.
 
@@ -26,7 +26,24 @@ import type {
   TransactionOut,
   TransactionPage,
 } from '../../lib/ledger/types.ts'
+import type { ItemKind } from '../../lib/collection/accounting.ts'
+import type {
+  ItemCreate,
+  ItemSell,
+  ItemUpdate,
+} from '../../lib/collection/schemas.ts'
+import type {
+  CollectionCheck,
+  ItemDetailOut,
+  ItemOut,
+  PriceChartingLookupOut,
+  TcgGroupOut,
+  TcgProductOut,
+} from '../../lib/collection/types.ts'
 import { api } from './api.ts'
+
+export type GameKey = 'mtg' | 'onepiece' | 'riftbound'
+export type { ItemDetailOut, ItemOut, TcgProductOut }
 
 export type { DashboardData, TransactionOut }
 
@@ -59,7 +76,16 @@ export function useAccounts() {
     const tree = buildAccountTree(rows)
     const flat = flattenTree(tree)
     const byId = new Map<number, AccountNode>(flat.map((a) => [a.id, a]))
-    return { tree, flat, byId }
+    // The Collection and everything under it: managed by the app, so hidden
+    // from account pickers (the API refuses manual postings to them anyway).
+    const collectionIds = new Set<number>()
+    const root = flat.find((a) => a.systemKey === 'collection')
+    const walk = (n: AccountNode) => {
+      collectionIds.add(n.id)
+      n.children.forEach(walk)
+    }
+    if (root) walk(root)
+    return { tree, flat, byId, collectionIds }
   }, [query.data])
   return { ...query, ...derived }
 }
@@ -123,6 +149,9 @@ function useLedgerMutation<TVars, TResult>(
         'transaction',
         'dashboard',
         'suggest',
+        'items',
+        'item',
+        'collection-check',
       ]) {
         void qc.invalidateQueries({ queryKey: [key] })
       }
@@ -159,3 +188,90 @@ export const useDeleteTransaction = () =>
   useLedgerMutation((id: number) =>
     api(`/transactions/${id}`, { method: 'DELETE' }),
   )
+
+// --- Collection ---
+
+export interface ItemFilters {
+  kind?: ItemKind
+  status: 'owned' | 'sold'
+  q?: string
+}
+
+export function useItems(filters: ItemFilters) {
+  return useQuery({
+    queryKey: ['items', filters],
+    queryFn: () => {
+      const params = new URLSearchParams({ status: filters.status })
+      if (filters.kind) params.set('kind', filters.kind)
+      if (filters.q) params.set('q', filters.q)
+      return api<ItemOut[]>(`/items?${params}`)
+    },
+  })
+}
+
+export function useItem(id: number) {
+  return useQuery({
+    queryKey: ['item', id],
+    queryFn: () => api<ItemDetailOut>(`/items/${id}`),
+  })
+}
+
+export function useCollectionCheck() {
+  return useQuery({
+    queryKey: ['collection-check'],
+    queryFn: () => api<CollectionCheck>('/collection/check'),
+  })
+}
+
+export function useTcgGroups(game: GameKey | null) {
+  return useQuery({
+    queryKey: ['tcg-groups', game],
+    queryFn: () => api<TcgGroupOut[]>(`/catalog/tcg/groups?game=${game}`),
+    enabled: game !== null,
+    staleTime: 60 * 60_000,
+  })
+}
+
+export function useTcgProducts(game: GameKey | null, groupId: number | null) {
+  return useQuery({
+    queryKey: ['tcg-products', game, groupId],
+    queryFn: () =>
+      api<TcgProductOut[]>(
+        `/catalog/tcg/products?game=${game}&groupId=${groupId}`,
+      ),
+    enabled: game !== null && groupId !== null,
+    staleTime: 60 * 60_000,
+  })
+}
+
+export const usePriceChartingLookup = () =>
+  useMutation({
+    mutationFn: (url: string) =>
+      api<PriceChartingLookupOut>('/catalog/pricecharting', {
+        method: 'POST',
+        ...json({ url }),
+      }),
+  })
+
+export const useCreateItem = () =>
+  useLedgerMutation((body: ItemCreate) =>
+    api<ItemOut>('/items', { method: 'POST', ...json(body) }),
+  )
+
+export const useUpdateItem = () =>
+  useLedgerMutation(({ id, ...body }: ItemUpdate & { id: number }) =>
+    api<ItemOut>(`/items/${id}`, { method: 'PATCH', ...json(body) }),
+  )
+
+export const useSellItem = () =>
+  useLedgerMutation(({ id, ...body }: ItemSell & { id: number }) =>
+    api<ItemOut>(`/items/${id}/sell`, { method: 'POST', ...json(body) }),
+  )
+
+export const useUndoSale = () =>
+  useLedgerMutation((id: number) =>
+    api<ItemOut>(`/items/${id}/sale`, { method: 'DELETE' }),
+  )
+
+export const useDeleteItem = () =>
+  useLedgerMutation((id: number) => api(`/items/${id}`, { method: 'DELETE' }))

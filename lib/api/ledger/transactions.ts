@@ -24,7 +24,11 @@ import type {
   TransactionOut,
   TransactionPage,
 } from '../../ledger/types.ts'
+import { collectionAccountIds, linkedItemId } from '../collection/common.ts'
 import { fail, idParam, validate } from '../errors.ts'
+
+const LINKED_MESSAGE =
+  'This transaction belongs to a collection item. Edit it from the item instead.'
 
 const header = {
   id: transactions.id,
@@ -187,6 +191,16 @@ async function checkAccounts(
     fail(400, 'One or more accounts do not exist')
   const archived = found.find((a) => a.archived && !allowedArchived.has(a.id))
   if (archived) fail(400, `"${archived.name}" is archived`)
+  // The Collection accounts only move with collection items (buy, add, sell),
+  // so they always equal the items' cost. Posting to them by hand would break that.
+  const collection = new Set(await collectionAccountIds(db))
+  const intoCollection = found.find((a) => collection.has(a.id))
+  if (intoCollection) {
+    fail(
+      400,
+      `"${intoCollection.name}" is a Collection account. Add, buy or sell items from the Collection page instead.`,
+    )
+  }
 }
 
 export function transactionRoutes(db: Db) {
@@ -227,9 +241,10 @@ export function transactionRoutes(db: Db) {
   })
 
   r.get('/:id', async (c) => {
-    const txn = await getTransaction(db, idParam(c.req.param('id')))
+    const id = idParam(c.req.param('id'))
+    const txn = await getTransaction(db, id)
     if (!txn) fail(404, 'Transaction not found')
-    return c.json(txn)
+    return c.json({ ...txn, linkedItemId: await linkedItemId(db, id) })
   })
 
   r.post('/', validate('json', transactionInputSchema), async (c) => {
@@ -269,6 +284,9 @@ export function transactionRoutes(db: Db) {
     const input = c.req.valid('json')
     const existing = await getTransaction(db, id)
     if (!existing) fail(404, 'Transaction not found')
+    // Collection entries are kept in step with their item; editing them here
+    // would break the Collection invariant.
+    if (await linkedItemId(db, id)) fail(409, LINKED_MESSAGE)
     await checkAccounts(
       db,
       input.postings.map((p) => p.accountId),
@@ -300,6 +318,7 @@ export function transactionRoutes(db: Db) {
 
   r.delete('/:id', async (c) => {
     const id = idParam(c.req.param('id'))
+    if (await linkedItemId(db, id)) fail(409, LINKED_MESSAGE)
     const deleted = await db
       .delete(transactions)
       .where(eq(transactions.id, id))

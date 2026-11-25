@@ -1,0 +1,1 @@
+ALTER TABLE "items" ALTER COLUMN "acquired_txn_id" DROP NOT NULL;
