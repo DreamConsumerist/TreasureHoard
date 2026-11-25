@@ -86,7 +86,8 @@ export function DraftAccounts({ draft }: { draft: PostingsDraft }) {
               value={l.memo}
               onChange={(e) => updateLine(l.key, { memo: e.target.value })}
               placeholder="Memo (optional)"
-              className="input py-1 text-sm"
+              // 16px on phones: iOS zooms into any field with smaller text.
+              className="input py-1 text-base sm:text-sm"
             />
           </div>
           <MoneyInput

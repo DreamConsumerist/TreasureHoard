@@ -136,14 +136,18 @@ Manual entry is the primary input. Import is added later, once the export format
 - Edge Function gate on every `/api/*` route except `/api/login`, plus the same check repeated as middleware inside the API function (defense in depth).
 - Pages and JS/CSS bundles are not gated: they contain app code only, never data. The app redirects to `/login` when the API returns 401.
 - Password hash and session-signing secret live in Netlify environment variables, never in the repo.
-- Session cookie: `HttpOnly`, `Secure`, `SameSite=Strict`.
+- Session cookie: `HttpOnly`, `Secure`, `SameSite=Strict`, valid 30 days. **Sliding:** a valid session over 7 days old is re-issued for another 30 days on the next API request (`lib/auth/session.ts`, `lib/api/app.ts`), so regular use never logs you out and 30 days of disuse does. The edge function only checks validity; renewal happens in the API.
 - `.env*`, `.netlify/`, and raw bank exports are git-ignored.
 
 ## Mobile UX
 
 - On narrow screens, tables become card lists. Bottom tab bar: Dashboard, Ledger, Collection, Add. The full site map is in [docs/plans/site-map.md](docs/plans/site-map.md).
 - **Quick-add:** amount (numeric keypad), payee, category, and date (defaults to today). An optional "this is a card or game" toggle also creates the inventory item, linked to the transaction.
-- Installable as a PWA.
+- **Installable as a PWA** (Safari → Share → Add to Home Screen). `vite-plugin-pwa` writes `manifest.webmanifest` and a Workbox service worker (`sw.js`) at build time; it's off in development.
+  - The service worker **precaches only the app's own files** (HTML, JS, CSS, icons), so the app opens fast and loads offline. **It never caches data:** `/api/*` and `/.netlify/*` are excluded from the navigation fallback and there are no runtime caching rules. Other sites' product photos use the browser's normal HTTP cache.
+  - **Updates prompt:** a new deploy shows "New version · Reload" (`src/components/UpdateBar.tsx`) rather than reloading mid-entry; an open app checks hourly.
+  - **iPhone:** `viewport-fit=cover` plus `env(safe-area-inset-*)` padding keeps content clear of the notch and home indicator; black status bar; form fields are 16px on phones so iOS doesn't zoom; an offline notice explains why nothing loads. An installed iPhone app keeps its own cookies, so it needs one login of its own.
+  - **Icons** are generated from `public/icon.svg` by `npm run icons` (`@vite-pwa/assets-generator`) and committed. The current icon is a placeholder.
 
 ## Project layout
 

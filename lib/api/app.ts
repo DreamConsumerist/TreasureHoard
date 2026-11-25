@@ -18,6 +18,7 @@ import {
   createSessionToken,
   SESSION_COOKIE,
   SESSION_MAX_AGE_SECONDS,
+  shouldRenewSession,
   verifySessionToken,
 } from '../auth/session.ts'
 import { catalogRoutes } from './collection/catalog.ts'
@@ -31,6 +32,14 @@ import { transactionRoutes } from './ledger/transactions.ts'
 import { priceRoutes } from './prices.ts'
 
 const FAILED_LOGIN_DELAY_MS = 1000
+
+const sessionCookieOptions = {
+  httpOnly: true, // page JavaScript can't read it
+  secure: true, // only sent over HTTPS (browsers allow localhost)
+  sameSite: 'Strict', // never sent on requests started by other sites
+  path: '/',
+  maxAge: SESSION_MAX_AGE_SECONDS,
+} as const
 
 /** Things the app reaches outside itself for; tests pass fakes. */
 export interface AppDeps {
@@ -48,7 +57,18 @@ export function createApp(db: Db, deps: AppDeps = {}) {
     const secret = process.env.SESSION_SECRET
     const token = getCookie(c, SESSION_COOKIE)
     if (secret && token && (await verifySessionToken(token, secret))) {
-      return next()
+      await next()
+      // Sliding session: a token over a week old is swapped for a fresh
+      // 30-day one, so regular use never logs you out.
+      if (shouldRenewSession(token)) {
+        setCookie(
+          c,
+          SESSION_COOKIE,
+          await createSessionToken(secret),
+          sessionCookieOptions,
+        )
+      }
+      return
     }
     return c.json({ error: 'Unauthorized' }, 401)
   })
@@ -79,13 +99,12 @@ export function createApp(db: Db, deps: AppDeps = {}) {
       return c.json({ error: 'Incorrect password' }, 401)
     }
 
-    setCookie(c, SESSION_COOKIE, await createSessionToken(secret), {
-      httpOnly: true, // page JavaScript can't read it
-      secure: true, // only sent over HTTPS (browsers allow localhost)
-      sameSite: 'Strict', // never sent on requests started by other sites
-      path: '/',
-      maxAge: SESSION_MAX_AGE_SECONDS,
-    })
+    setCookie(
+      c,
+      SESSION_COOKIE,
+      await createSessionToken(secret),
+      sessionCookieOptions,
+    )
     return c.json({ ok: true })
   })
 

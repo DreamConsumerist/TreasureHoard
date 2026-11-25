@@ -16,6 +16,7 @@ TreasureHoard: a single-user personal finance app, a double-entry general ledger
 | `npm run db:status` | Show applied and pending migrations |
 | `npm run hash-password` | Prompt for a password and print its hash for `APP_PASSWORD_HASH` |
 | `npm run gen-secret` | Print a random value for `SESSION_SECRET` |
+| `npm run icons` | Regenerate the PWA icons and favicon in `public/` from `public/icon.svg` |
 
 Always open the app through port **8888** (Netlify's dev proxy), not Vite's 5173. Only 8888 runs the functions and edge functions.
 

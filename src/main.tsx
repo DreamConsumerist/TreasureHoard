@@ -5,6 +5,7 @@ import { createBrowserRouter } from 'react-router'
 import { RouterProvider } from 'react-router/dom'
 import './index.css'
 import { AppShell } from './components/AppShell.tsx'
+import { UpdateBar } from './components/UpdateBar.tsx'
 import AccountRegister from './routes/AccountRegister.tsx'
 import AccountsPage from './routes/AccountsPage.tsx'
 import Collection from './routes/Collection.tsx'
@@ -50,6 +51,7 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <RouterProvider router={router} />
+      <UpdateBar />
     </QueryClientProvider>
   </StrictMode>,
 )

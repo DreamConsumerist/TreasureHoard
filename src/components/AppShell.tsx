@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router'
 import { useRecurringCatchUp } from '../lib/queries.ts'
+import { OfflineBar } from './OfflineBar.tsx'
 import { QuickAddContext } from '../lib/quickAdd.ts'
 import { TransactionForm } from './TransactionForm.tsx'
 
@@ -68,7 +69,10 @@ export function AppShell() {
           </NavLink>
         </aside>
 
-        <main className="mx-auto w-full max-w-4xl flex-1 p-4 pb-24 md:pb-8">
+        {/* Safe-area padding keeps content clear of the iPhone's notch and
+            home indicator when installed (viewport-fit=cover in index.html). */}
+        <main className="mx-auto w-full max-w-4xl flex-1 p-4 pt-[calc(1rem+env(safe-area-inset-top))] pb-[calc(6rem+env(safe-area-inset-bottom))] md:pb-8">
+          <OfflineBar />
           <Outlet />
         </main>
       </div>
@@ -92,7 +96,7 @@ export function AppShell() {
         onClose={() => setOpen(false)}
         className="m-0 mt-auto w-full max-w-none rounded-t-2xl bg-white p-0 text-inherit backdrop:bg-black/40 md:m-auto md:max-w-lg md:rounded-2xl dark:bg-zinc-900"
       >
-        <div className="max-h-[90dvh] overflow-y-auto p-4">
+        <div className="max-h-[90dvh] overflow-y-auto p-4 pb-[calc(1rem+env(safe-area-inset-bottom))]">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="text-lg font-semibold">New transaction</h2>
             <button

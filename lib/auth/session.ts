@@ -11,6 +11,12 @@
 
 export const SESSION_COOKIE = 'session'
 export const SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60 // 30 days
+/**
+ * Sliding sessions: a valid token older than this is replaced by a fresh
+ * 30-day one on the next API request (lib/api/app.ts). Used at least weekly,
+ * you stay logged in; left alone for 30 days, you're logged out.
+ */
+export const SESSION_RENEW_AFTER_SECONDS = 7 * 24 * 60 * 60 // 7 days
 
 const encoder = new TextEncoder()
 
@@ -85,4 +91,21 @@ export async function verifySessionToken(
     encoder.encode(payload),
   )
   return valid && Number(payload) > now
+}
+
+/**
+ * True if a token (already verified) is old enough to be replaced: more than
+ * SESSION_RENEW_AFTER_SECONDS since it was issued. The token stores only its
+ * expiry, and every token lasts SESSION_MAX_AGE_SECONDS, so its issue time is
+ * expiry − max age.
+ */
+export function shouldRenewSession(
+  token: string,
+  now: number = nowSeconds(),
+): boolean {
+  const expiresAt = Number(token.split('.')[0])
+  if (!Number.isFinite(expiresAt)) return false
+  return (
+    expiresAt - SESSION_MAX_AGE_SECONDS + SESSION_RENEW_AFTER_SECONDS <= now
+  )
 }
