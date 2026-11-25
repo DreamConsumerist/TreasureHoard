@@ -47,23 +47,27 @@ Scheduled functions only fire on the published production deploy, not on deploy 
 
 ### Ledger (double-entry)
 
-- **`accounts`**: `id`, `name`, `type` (`asset` | `liability` | `equity` | `income` | `expense`), `parent_id` (for nesting, e.g. Expenses → Hobbies → Cards), `archived`.
-- **`transactions`**: `id`, `date`, `description`, `notes`, `status` (`pending` | `cleared`), `external_id` (unique, nullable; set by imports), `import_batch_id` (nullable).
+- **`accounts`**: `id`, `name`, `type` (`asset` | `liability` | `equity` | `income` | `expense`), `parent_id` (for nesting, e.g. Expenses → Hobbies → Cards; same type as the parent), `system_key` (unique, nullable: a stable handle for accounts the app relies on, such as `opening_balances`; these can be renamed but not deleted), `archived`. Sibling names are unique.
+- **`transactions`**: `id`, `date`, `description`, `notes`, `status` (`pending` | `cleared`), `external_id` (unique, nullable; set by imports), `import_batch_id` (nullable), `kind` (`normal` | `opening`; opening-balance entries are hidden from the register by default), `recurring_template_id` (nullable, Step 5).
+- **`recurring_templates`** *(Step 5)*: description, template postings, schedule (every N weeks/months/years, start, optional end). Due occurrences are generated lazily, as `pending` transactions, when the API loads data.
 - **`postings`**: `id`, `transaction_id`, `account_id`, `amount_cents` (signed bigint), `memo`.
 - **`import_batches`**: `id`, `source`, `filename`, `imported_at`.
 - **`categorization_rules`** *(later)*: description pattern → account.
 
 Rules:
 - **Money is stored as integer cents.** Never as floats.
-- **Each transaction's postings sum to zero.** The API enforces this, with a database-level check as a backstop.
+- **Each transaction's postings sum to zero, and there are at least two.** The API enforces this (Zod schema + `lib/ledger/postings.ts`). As a backstop, deferred constraint triggers check it at commit time (hand-written migration `ledger_integrity`), so even code that bypasses the API can't save an unbalanced transaction.
 - Sign convention: positive = debit, negative = credit.
 - Account balances and net worth are derived from postings, never stored.
 
 ### Inventory
 
-- **`items`**: `id`, `kind` (`card` | `game`), `name`, `quantity`, `condition`, `cost_basis_cents`, `acquired_date`, `acquired_txn_id` (nullable → transactions), `sold_txn_id` (nullable → transactions), `notes`.
-- **`card_details`**: `item_id`, `tcgplayer_product_id`, `sub_type` (e.g. Normal, Foil), `set_name`.
-- **`game_details`**: `item_id`, `platform`, `pricecharting_url`, `variant` (`loose` | `cib` | `new`).
+- **`items`**: `id`, `kind` (`card` | `sealed` | `game` | `hardware`), `name`, `quantity`, `condition`, `cost_basis_cents`, `basis_source` (`purchase` | `baseline`), `acquired_date`, `acquired_txn_id` (nullable → transactions), `sold_txn_id` (nullable → transactions), `notes`.
+- **`card_details`**: `item_id`, `tcgplayer_product_id`, `sub_type` (e.g. Normal, Foil; null for sealed), `set_name`. Used by both `card` and `sealed`.
+- **`game_details`**: `item_id`, `platform`, `pricecharting_url`, `variant` (`loose` | `cib` | `new`). Used by both `game` and `hardware`.
+- **`wishlist_items`** *(Step 6)*: product reference (`source`, `external_id`, `variant`), `target_price_cents`, `notes`.
+
+Collection scope: MTG, One Piece and Riftbound cards and sealed product (TCGCSV categories 1, 68, 89), plus video games, consoles and accessories (PriceCharting). No graded cards.
 
 ### Valuation
 
@@ -73,19 +77,31 @@ Rules:
   - Append-only. Supports value-over-time charts and unrealized gain/loss against cost basis.
 - **`sync_runs`**: `job`, `started_at`, `finished_at`, `status`, `ok_count`, `failed_count`, `error`. Powers the "prices stale since X" indicator.
 
-Market value lives in snapshots, **not** in the ledger, so price changes don't clutter the books. Mark-to-market ledger entries can be added later if collection value should count toward net worth on the books.
+### Collection accounting
+
+**Cost is in the ledger, and market value is in snapshots.** Price changes therefore never clutter the books.
+
+- **Purchases are assets at cost:** debit Assets → Collection → (Cards | Sealed | Games | Hardware), credit the paying account.
+- **Sales:** proceeds to the receiving account, credit Collection for the cost basis, and the difference to Income → Realized Gains on Collection. Selling part of a quantity splits the item row and prorates the basis.
+- **Fresh-start baseline:** there are no purchase records for the existing collection, so items already owned are entered at their market value on the day they're added (`basis_source = baseline`). This happens through an opening-balance transaction (debit Collection, credit Equity → Opening Balances). Cash accounts likewise start at their current balances. Gains on baseline items are measured from that value. The app is for personal tracking, not taxes.
+- **Invariant:** the Collection account balance equals the summed cost basis of unsold items.
+- **Net worth comes in two forms:**
+  - **book**: from the ledger, with the collection at cost
+  - **market**: book − collection cost + collection market value
+
+  The Dashboard headlines market net worth.
 
 ## Pricing integrations
 
 ### TCGCSV (cards)
 - Runs daily: a scheduled function triggers a background function that does the work.
-- Downloads price files only for groups (sets) that contain owned cards.
+- Downloads price files only for groups (sets) that contain owned cards or wishlist entries.
 - Matches by TCGplayer product ID and sub-type.
 
 ### PriceCharting (games): scraper
 Scraping is against PriceCharting's terms; for this personal, low-volume use that risk is accepted. The scraper is built to stay polite and to fail visibly:
 
-- **Narrow scope:** fetches only the stored `pricecharting_url` of owned items. No crawling, no search scraping.
+- **Narrow scope:** fetches only the stored `pricecharting_url` of owned items and wishlist entries, plus a single page fetch when a URL is pasted in to add an item. No crawling, no search scraping.
 - **Low rate:** weekly runs, requests spaced a few seconds apart with jitter, honors `robots.txt`.
 - **Isolated parsing:** `parsePriceChartingPage(html) → { loose, cib, new }` lives in a single module, so markup changes need a fix in one file only.
 - **Visible failure:** a parse failure is logged to `sync_runs` and the last good snapshot is kept. It is never recorded as a zero price.
@@ -113,7 +129,7 @@ Manual entry is the primary input. Import is added later, once the export format
 
 ## Mobile UX
 
-- On narrow screens, tables become card lists. Bottom tab bar: Dashboard, Ledger, Inventory, Add.
+- On narrow screens, tables become card lists. Bottom tab bar: Dashboard, Ledger, Collection, Add. The full site map is in [docs/plans/site-map.md](docs/plans/site-map.md).
 - **Quick-add:** amount (numeric keypad), payee, category, and date (defaults to today). An optional "this is a card or game" toggle also creates the inventory item, linked to the transaction.
 - Installable as a PWA.
 
@@ -123,7 +139,7 @@ Manual entry is the primary input. Import is added later, once the export format
 TreasureHoard/
 ├─ netlify.toml
 ├─ src/                          # React app
-│  ├─ routes/                    # dashboard, ledger, accounts, inventory, import
+│  ├─ routes/                    # dashboard, ledger/*, collection/*, settings
 │  └─ components/
 ├─ netlify/
 │  ├─ functions/
@@ -137,12 +153,14 @@ TreasureHoard/
 │  ├─ schema.ts                  # Drizzle table definitions (source of truth)
 │  └─ index.ts                   # Drizzle client
 ├─ lib/                          # pure logic, no Netlify dependencies
-│  ├─ ledger/                    # balance checks, money helpers
+│  ├─ api/                       # Hono app: createApp(db) + route modules (api.mts wraps it)
+│  ├─ ledger/                    # money, signs, posting rules, account tree, Zod schemas, shared types
 │  ├─ pricing/tcgcsv.ts
 │  ├─ pricing/pricecharting.ts   # fetch + parse
 │  └─ import/                    # OFX / CSV parsers (later)
 ├─ scripts/scrape-local.ts       # fallback scraper runner
-└─ tests/fixtures/               # saved HTML, sanitized bank samples
+└─ tests/                        # Vitest; API tests run createApp() on in-memory PGlite with real migrations
+   └─ fixtures/                  # saved HTML, sanitized bank samples
 ```
 
 ## Development workflow and deploys
@@ -184,7 +202,9 @@ Check the usage page in the Netlify dashboard after the first couple of weeks wi
 Each milestone ends with a working, deployed app.
 
 1. **Foundation:** scaffold, database, auth gate, deploy an empty shell to Netlify.
-2. **Ledger:** accounts, manual transactions, balances.
-3. **Inventory:** items with card/game details, linked to purchase transactions.
-4. **Pricing:** TCGCSV sync, then the PriceCharting scraper; dashboard with collection value and gain/loss.
-5. **Polish:** PWA install, charts, bank import.
+2. **Ledger:** accounts and a starter chart, simple/split transaction entry, registers, natural-sign display, balances.
+3. **Collection:** cards, sealed, games and hardware; product lookup; buy, baseline and sell flows.
+4. **Pricing:** TCGCSV sync, then the PriceCharting scraper; dashboard with collection value, gain/loss and net worth.
+5. **Recurring transactions:** templates, lazy generation as pending, due alerts.
+6. **Wishlist:** target prices, alerts, conversion to owned items.
+7. **Polish:** PWA install, reports and charts, bank import.

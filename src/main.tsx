@@ -4,17 +4,35 @@ import { createRoot } from 'react-dom/client'
 import { createBrowserRouter } from 'react-router'
 import { RouterProvider } from 'react-router/dom'
 import './index.css'
-import Home from './routes/Home.tsx'
+import { AppShell } from './components/AppShell.tsx'
+import AccountRegister from './routes/AccountRegister.tsx'
+import AccountsPage from './routes/AccountsPage.tsx'
+import Dashboard from './routes/Dashboard.tsx'
 import Login from './routes/Login.tsx'
+import Register from './routes/Register.tsx'
+import Settings from './routes/Settings.tsx'
+import TransactionPage from './routes/TransactionPage.tsx'
 
 // Caches API responses and tracks loading/error state for every query.
 const queryClient = new QueryClient()
 
-// Client-side routes. Netlify serves index.html for every path (the SPA
-// fallback in netlify.toml), then this router picks the page.
+// Client-side routes. In production Netlify serves index.html for every path
+// (the SPA fallback written by vite.config.ts), then this router picks the page.
+// Every logged-in page renders inside AppShell (sidebar / tab bar / quick-add).
 const router = createBrowserRouter([
-  { path: '/', element: <Home /> },
   { path: '/login', element: <Login /> },
+  {
+    element: <AppShell />,
+    children: [
+      { path: '/', element: <Dashboard /> },
+      { path: '/ledger', element: <Register /> },
+      { path: '/ledger/new', element: <TransactionPage /> },
+      { path: '/ledger/accounts', element: <AccountsPage /> },
+      { path: '/ledger/accounts/:id', element: <AccountRegister /> },
+      { path: '/ledger/:id', element: <TransactionPage /> },
+      { path: '/settings', element: <Settings /> },
+    ],
+  },
 ])
 
 createRoot(document.getElementById('root')!).render(
