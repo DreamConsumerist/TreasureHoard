@@ -30,19 +30,20 @@ import { fail, idParam, validate } from '../errors.ts'
 const LINKED_MESSAGE =
   'This transaction belongs to a collection item. Edit it from the item instead.'
 
-const header = {
+export const header = {
   id: transactions.id,
   date: transactions.date,
   description: transactions.description,
   notes: transactions.notes,
   status: transactions.status,
   kind: transactions.kind,
+  recurringTemplateId: transactions.recurringTemplateId,
 }
 
 /** Escapes LIKE wildcards so a search for "50%" matches literally. */
 const likeEscape = (s: string) => s.replace(/[\\%_]/g, (ch) => `\\${ch}`)
 
-async function attachPostings<T extends { id: number }>(
+export async function attachPostings<T extends { id: number }>(
   db: Db,
   rows: T[],
 ): Promise<(T & { postings: PostingOut[] })[]> {
@@ -159,7 +160,7 @@ export async function listTransactions(
   }
 }
 
-async function getTransaction(
+export async function getTransaction(
   db: Db,
   id: number,
 ): Promise<TransactionOut | null> {
@@ -173,7 +174,7 @@ async function getTransaction(
 }
 
 /** Rejects postings to unknown accounts, and to archived accounts not already on this transaction. */
-async function checkAccounts(
+export async function checkAccounts(
   db: Db,
   accountIds: number[],
   allowedArchived: Set<number>,

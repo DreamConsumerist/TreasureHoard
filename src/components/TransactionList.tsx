@@ -62,6 +62,15 @@ export function TransactionList({
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-medium">
                   {t.description}
+                  {t.recurringTemplateId !== null && (
+                    <span
+                      className="ml-1.5 font-normal text-zinc-500"
+                      title="Recurring"
+                      aria-label="Recurring"
+                    >
+                      ↻
+                    </span>
+                  )}
                   {t.status === 'pending' && (
                     <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-normal text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
                       pending

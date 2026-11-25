@@ -7,7 +7,6 @@ import {
   and,
   asc,
   count,
-  desc,
   eq,
   ilike,
   isNotNull,
@@ -26,6 +25,7 @@ import {
   transactions,
 } from '../../../db/schema.ts'
 import type { Db, Tx } from '../../../db/types.ts'
+import { latestPrices, recordSnapshot } from '../../pricing/snapshots.ts'
 import {
   baselinePostings,
   KIND_ACCOUNT_KEY,
@@ -34,11 +34,7 @@ import {
   splitBasis,
   type ItemKind,
 } from '../../collection/accounting.ts'
-import {
-  priceKeyFor,
-  priceKeyString,
-  type PriceKey,
-} from '../../collection/prices.ts'
+import { priceKeyFor, priceKeyString } from '../../collection/prices.ts'
 import {
   itemCreateSchema,
   itemListQuerySchema,
@@ -56,7 +52,8 @@ const likeEscape = (s: string) => s.replace(RECORD_ESCAPE, (ch) => `\\${ch}`)
 
 // --- Reading ---------------------------------------------------------------
 
-async function loadItems(db: Db | Tx, where: SQL[]): Promise<ItemOut[]> {
+/** Items with their details and latest prices. Also used by the dashboard. */
+export async function loadItems(db: Db | Tx, where: SQL[]): Promise<ItemOut[]> {
   const rows = await db
     .select({ item: items, card: cardDetails, game: gameDetails })
     .from(items)
@@ -65,34 +62,13 @@ async function loadItems(db: Db | Tx, where: SQL[]): Promise<ItemOut[]> {
     .where(and(...where))
     .orderBy(asc(items.name), asc(items.id))
 
-  // Latest snapshot per price key. The table is small (a few rows per owned
-  // product per sync), so reading the latest row of each key is cheap.
-  const latest = await db
-    .selectDistinctOn(
-      [
-        priceSnapshots.source,
-        priceSnapshots.externalId,
-        priceSnapshots.variant,
-      ],
-      {
-        source: priceSnapshots.source,
-        externalId: priceSnapshots.externalId,
-        variant: priceSnapshots.variant,
-        priceCents: priceSnapshots.priceCents,
-        asOf: priceSnapshots.asOf,
-      },
-    )
-    .from(priceSnapshots)
-    .orderBy(
-      priceSnapshots.source,
-      priceSnapshots.externalId,
-      priceSnapshots.variant,
-      desc(priceSnapshots.asOf),
-    )
-  const priceByKey = new Map(latest.map((s) => [priceKeyString(s), s]))
+  const priceByKey = await latestPrices(db)
 
   return rows.map(({ item, card, game }) => {
-    const out: Omit<ItemOut, 'unitPriceCents' | 'priceAsOf'> = {
+    const out: Omit<
+      ItemOut,
+      'unitPriceCents' | 'priceAsOf' | 'weekAgoPriceCents'
+    > = {
       id: item.id,
       kind: item.kind,
       name: item.name,
@@ -132,6 +108,7 @@ async function loadItems(db: Db | Tx, where: SQL[]): Promise<ItemOut[]> {
       ...out,
       unitPriceCents: price?.priceCents ?? null,
       priceAsOf: price?.asOf ?? null,
+      weekAgoPriceCents: price?.weekAgoPriceCents ?? null,
     }
   })
 }
@@ -186,29 +163,6 @@ async function itemsSharingTxn(tx: Tx, txnId: number): Promise<number> {
     .from(items)
     .where(eq(items.acquiredTxnId, txnId))
   return row?.n ?? 0
-}
-
-async function recordSnapshot(
-  tx: Tx,
-  key: PriceKey,
-  priceCents: number,
-  asOf: string,
-  overwrite: boolean,
-) {
-  const insert = tx.insert(priceSnapshots).values({ ...key, priceCents, asOf })
-  if (overwrite) {
-    await insert.onConflictDoUpdate({
-      target: [
-        priceSnapshots.source,
-        priceSnapshots.externalId,
-        priceSnapshots.variant,
-        priceSnapshots.asOf,
-      ],
-      set: { priceCents },
-    })
-  } else {
-    await insert.onConflictDoNothing()
-  }
 }
 
 const kindAccount = (tx: Tx, kind: ItemKind) =>

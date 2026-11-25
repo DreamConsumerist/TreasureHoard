@@ -4,6 +4,7 @@
 
 import { z } from 'zod'
 import { validatePostings } from './postings.ts'
+import { FREQUENCIES } from './recurring.ts'
 import { ACCOUNT_TYPES } from './sign.ts'
 
 const id = z.int().positive()
@@ -72,3 +73,34 @@ export const transactionListQuerySchema = z.object({
   limit: z.coerce.number().pipe(z.int().min(1).max(200)).default(50),
 })
 export type TransactionListQuery = z.infer<typeof transactionListQuerySchema>
+
+// --- Recurring templates ---
+
+export const recurringInputSchema = z
+  .object({
+    description: z.string().trim().min(1, 'Description is required').max(200),
+    notes: z.string().trim().max(2000).nullable().optional(),
+    frequency: z.enum(FREQUENCIES),
+    interval: z.int().min(1).max(99).default(1),
+    startDate: isoDate,
+    endDate: isoDate.nullable().optional(),
+    variable: z.boolean().default(false),
+    active: z.boolean().default(true),
+    postings: z.array(postingSchema).max(50),
+  })
+  .superRefine((t, ctx) => {
+    for (const message of validatePostings(t.postings)) {
+      ctx.addIssue({ code: 'custom', path: ['postings'], message })
+    }
+    if (t.endDate && t.endDate < t.startDate) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['endDate'],
+        message: 'The end date is before the start date',
+      })
+    }
+  })
+export type RecurringInput = z.input<typeof recurringInputSchema>
+
+// The browser's local date, so "due today" matches your calendar.
+export const catchUpSchema = z.object({ today: isoDate })

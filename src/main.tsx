@@ -12,6 +12,8 @@ import CollectionNew from './routes/CollectionNew.tsx'
 import Dashboard from './routes/Dashboard.tsx'
 import ItemPage from './routes/ItemPage.tsx'
 import Login from './routes/Login.tsx'
+import Recurring from './routes/Recurring.tsx'
+import RecurringEdit from './routes/RecurringEdit.tsx'
 import Register from './routes/Register.tsx'
 import Settings from './routes/Settings.tsx'
 import TransactionPage from './routes/TransactionPage.tsx'
@@ -32,6 +34,9 @@ const router = createBrowserRouter([
       { path: '/ledger/new', element: <TransactionPage /> },
       { path: '/ledger/accounts', element: <AccountsPage /> },
       { path: '/ledger/accounts/:id', element: <AccountRegister /> },
+      { path: '/ledger/recurring', element: <Recurring /> },
+      { path: '/ledger/recurring/new', element: <RecurringEdit /> },
+      { path: '/ledger/recurring/:id', element: <RecurringEdit /> },
       { path: '/ledger/:id', element: <TransactionPage /> },
       { path: '/collection', element: <Collection /> },
       { path: '/collection/new', element: <CollectionNew /> },

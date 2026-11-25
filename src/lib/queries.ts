@@ -3,15 +3,17 @@
 // handled in one place.
 
 import {
+  type QueryClient,
   useInfiniteQuery,
   useMutation,
   useQuery,
   useQueryClient,
 } from '@tanstack/react-query'
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import type {
   AccountCreate,
   AccountUpdate,
+  RecurringInput,
   TransactionInput,
 } from '../../lib/ledger/schemas.ts'
 import {
@@ -22,6 +24,7 @@ import {
 } from '../../lib/ledger/tree.ts'
 import type {
   DashboardData,
+  RecurringTemplateOut,
   Suggestion,
   TransactionOut,
   TransactionPage,
@@ -40,12 +43,13 @@ import type {
   TcgGroupOut,
   TcgProductOut,
 } from '../../lib/collection/types.ts'
+import type { SyncJobStatus } from '../../lib/pricing/types.ts'
 import { api } from './api.ts'
 
 export type GameKey = 'mtg' | 'onepiece' | 'riftbound'
-export type { ItemDetailOut, ItemOut, TcgProductOut }
+export type { ItemDetailOut, ItemOut, SyncJobStatus, TcgProductOut }
 
-export type { DashboardData, TransactionOut }
+export type { DashboardData, RecurringTemplateOut, TransactionOut }
 
 export interface TransactionFilters {
   accountId?: number
@@ -152,6 +156,8 @@ function useLedgerMutation<TVars, TResult>(
         'items',
         'item',
         'collection-check',
+        'price-status',
+        'recurring',
       ]) {
         void qc.invalidateQueries({ queryKey: [key] })
       }
@@ -188,6 +194,70 @@ export const useDeleteTransaction = () =>
   useLedgerMutation((id: number) =>
     api(`/transactions/${id}`, { method: 'DELETE' }),
   )
+
+// --- Recurring ---
+
+export function useRecurringTemplates() {
+  return useQuery({
+    queryKey: ['recurring'],
+    queryFn: () => api<RecurringTemplateOut[]>('/recurring'),
+  })
+}
+
+export function useRecurringTemplate(id: number | null) {
+  return useQuery({
+    queryKey: ['recurring', id],
+    queryFn: () => api<RecurringTemplateOut>(`/recurring/${id}`),
+    enabled: id !== null,
+  })
+}
+
+export const useSaveRecurring = () =>
+  useLedgerMutation(({ id, ...body }: RecurringInput & { id?: number }) =>
+    id
+      ? api<RecurringTemplateOut>(`/recurring/${id}`, {
+          method: 'PUT',
+          ...json(body),
+        })
+      : api<RecurringTemplateOut>('/recurring', {
+          method: 'POST',
+          ...json(body),
+        }),
+  )
+
+export const useDeleteRecurring = () =>
+  useLedgerMutation((id: number) =>
+    api(`/recurring/${id}`, { method: 'DELETE' }),
+  )
+
+/**
+ * Creates any recurring transactions that have come due, once per app load,
+ * using the browser's local date. Refreshes everything only if it made some.
+ */
+export function useRecurringCatchUp() {
+  const qc = useQueryClient()
+  const ran = useRef(false)
+  useEffect(() => {
+    if (ran.current) return // React's dev double-mount
+    ran.current = true
+    void runCatchUp(qc)
+  }, [qc])
+}
+
+/** Runs the catch-up now (also after saving a template, so past dates appear at once). */
+export async function runCatchUp(qc: QueryClient): Promise<number> {
+  try {
+    const { created } = await api<{ created: number }>('/recurring/catch-up', {
+      method: 'POST',
+      ...json({ today: todayLocal() }),
+    })
+    if (created > 0) await qc.invalidateQueries()
+    return created
+  } catch (err) {
+    console.error('Recurring catch-up failed:', err)
+    return 0
+  }
+}
 
 // --- Collection ---
 
@@ -275,3 +345,41 @@ export const useUndoSale = () =>
 
 export const useDeleteItem = () =>
   useLedgerMutation((id: number) => api(`/items/${id}`, { method: 'DELETE' }))
+
+// --- Price sync ---
+
+/**
+ * Latest sync run per job. Polls every 3 s while a run is going; when one
+ * finishes, refreshes everything that shows prices.
+ */
+export function usePriceStatus() {
+  const qc = useQueryClient()
+  const query = useQuery({
+    queryKey: ['price-status'],
+    queryFn: () => api<SyncJobStatus[]>('/prices/status'),
+    refetchInterval: (q) =>
+      q.state.data?.some((s) => s.last?.status === 'running') ? 3000 : false,
+  })
+  const running = query.data?.some((s) => s.last?.status === 'running') ?? false
+  const wasRunning = useRef(running)
+  useEffect(() => {
+    if (wasRunning.current && !running) {
+      for (const key of ['items', 'item', 'dashboard'])
+        void qc.invalidateQueries({ queryKey: [key] })
+    }
+    wasRunning.current = running
+  }, [running, qc])
+  return query
+}
+
+export function useStartSync() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (job: 'tcg' | 'games') =>
+      api<{ runId: number }>('/prices/sync', {
+        method: 'POST',
+        ...json({ job }),
+      }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ['price-status'] }),
+  })
+}

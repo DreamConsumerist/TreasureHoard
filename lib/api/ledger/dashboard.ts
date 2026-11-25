@@ -1,11 +1,24 @@
 // /api/dashboard: the headline numbers for the home page.
 
-import { and, desc, eq, gte, lt, ne, sql } from 'drizzle-orm'
+import { and, desc, eq, gte, isNull, lt, ne, sql } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { z } from 'zod'
-import { accounts, postings, transactions } from '../../../db/schema.ts'
+import { accounts, items, postings, transactions } from '../../../db/schema.ts'
 import type { Db } from '../../../db/types.ts'
+import {
+  marketNetWorthCents,
+  marketValueCents,
+  weekChangeCents,
+} from '../../collection/valuation.ts'
+import type { Mover } from '../../ledger/types.ts'
 import { collectionLedgerCents } from '../collection/common.ts'
+import { loadItems } from '../collection/items.ts'
+import {
+  dueOccurrences,
+  owedToYou,
+  receivableAccountIds,
+  upcomingOccurrences,
+} from './recurring.ts'
 import { validate } from '../errors.ts'
 import { todayUtc } from './accounts.ts'
 import { listTransactions } from './transactions.ts'
@@ -66,21 +79,62 @@ export function dashboardRoutes(db: Db) {
         .groupBy(accounts.id, accounts.name)
         .orderBy(desc(sql`sum(${postings.amountCents})`))
 
-    const [current, previous, recent, collectionCostCents] = await Promise.all([
+    const receivableIds = await receivableAccountIds(db)
+    const [
+      current,
+      previous,
+      recent,
+      collectionCostCents,
+      owned,
+      due,
+      upcoming,
+      owed,
+    ] = await Promise.all([
       spendingBetween(thisMonth, nextMonth),
       spendingBetween(lastMonth, thisMonth),
       listTransactions(db, { limit: 8 }),
       collectionLedgerCents(db),
+      loadItems(db, [isNull(items.soldDate)]),
+      dueOccurrences(db),
+      upcomingOccurrences(db, today),
+      owedToYou(db, receivableIds),
     ])
+    const owedCents = owed.reduce((s, o) => s + o.balanceCents, 0)
+
+    // Market value lives in price snapshots, never in the ledger.
+    const collectionMarketCents = owned.reduce(
+      (s, i) => s + marketValueCents(i),
+      0,
+    )
+    const movers: Mover[] = owned
+      .map((i) => ({
+        itemId: i.id,
+        name: i.name,
+        imageUrl: i.card?.imageUrl ?? i.game?.imageUrl ?? null,
+        quantity: i.quantity,
+        valueCents: marketValueCents(i),
+        changeCents: weekChangeCents(i),
+      }))
+      .filter((m): m is Mover => m.changeCents !== null && m.changeCents !== 0)
+      .sort((a, b) => Math.abs(b.changeCents) - Math.abs(a.changeCents))
+      .slice(0, 5)
+    const bookNetWorthCents = total('asset') + total('liability')
     const sum = (rows: { cents: number }[]) =>
       rows.reduce((s, r) => s + r.cents, 0)
 
     return c.json({
       // Assets minus liabilities. Liabilities are stored negative (credits), so it's a sum.
-      // Includes the Collection at cost; Step 4 adds the market-value view.
-      bookNetWorthCents: total('asset') + total('liability'),
-      // Cash = every asset account except the Collection.
-      cashCents: total('asset') - collectionCostCents,
+      // Assets minus liabilities, with the Collection at cost.
+      bookNetWorthCents,
+      marketNetWorthCents: marketNetWorthCents(
+        bookNetWorthCents,
+        collectionCostCents,
+        collectionMarketCents,
+      ),
+      collectionMarketCents,
+      movers,
+      // Cash = every asset account except the Collection and money owed to you.
+      cashCents: total('asset') - collectionCostCents - owedCents,
       collectionCostCents,
       spending: {
         thisMonthCents: sum(current),
@@ -88,6 +142,8 @@ export function dashboardRoutes(db: Db) {
         topCategories: current.slice(0, 5),
       },
       recent: recent.items,
+      recurring: { due, upcoming },
+      owedToYou: owed,
     })
   })
 

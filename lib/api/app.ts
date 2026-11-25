@@ -26,7 +26,9 @@ import { itemRoutes } from './collection/items.ts'
 import { handleError } from './errors.ts'
 import { accountRoutes } from './ledger/accounts.ts'
 import { dashboardRoutes } from './ledger/dashboard.ts'
+import { recurringRoutes } from './ledger/recurring.ts'
 import { transactionRoutes } from './ledger/transactions.ts'
+import { priceRoutes } from './prices.ts'
 
 const FAILED_LOGIN_DELAY_MS = 1000
 
@@ -108,11 +110,13 @@ export function createApp(db: Db, deps: AppDeps = {}) {
   app.route('/accounts', accountRoutes(db))
   app.route('/transactions', transactionRoutes(db))
   app.route('/dashboard', dashboardRoutes(db))
+  app.route('/recurring', recurringRoutes(db))
 
   // --- Collection ---
   app.route('/catalog', catalogRoutes(fetchFn))
   app.route('/items', itemRoutes(db))
   app.route('/collection', checkRoutes(db))
+  app.route('/prices', priceRoutes(db, fetchFn))
 
   return app
 }

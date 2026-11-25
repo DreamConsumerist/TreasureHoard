@@ -1,8 +1,9 @@
 // /collection/:id: one item, with its cost, value, gain, linked transactions,
 // and the edit / sell / undo-sale / delete actions.
 
-import { useState, type FormEvent } from 'react'
+import { lazy, Suspense, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router'
+import { weekChangeCents } from '../../lib/collection/valuation.ts'
 import {
   centsToInput,
   formatMoney,
@@ -12,6 +13,7 @@ import { AccountPicker } from '../components/AccountPicker.tsx'
 import { Amount } from '../components/Amount.tsx'
 import { GainBadge, Thumb } from '../components/ItemList.tsx'
 import { MoneyInput } from '../components/MoneyInput.tsx'
+import { PriceChange } from '../components/PriceChange.tsx'
 import {
   CONDITIONS,
   itemGain,
@@ -28,6 +30,14 @@ import {
   useUpdateItem,
   type ItemDetailOut,
 } from '../lib/queries.ts'
+
+// The chart library (Recharts) is large, so it loads only when an item page
+// opens, keeping it out of the bundle every other page downloads.
+const PriceChart = lazy(() =>
+  import('../components/PriceChart.tsx').then((m) => ({
+    default: m.PriceChart,
+  })),
+)
 
 function Row({
   label,
@@ -402,7 +412,8 @@ export default function ItemPage() {
               ) : (
                 <>
                   <Amount cents={item.unitPriceCents} />{' '}
-                  <span className="text-zinc-500">as of {item.priceAsOf}</span>
+                  <span className="text-zinc-500">as of {item.priceAsOf}</span>{' '}
+                  <PriceChange cents={weekChangeCents(item)} suffix="7d" />
                 </>
               )}
             </Row>
@@ -460,6 +471,25 @@ export default function ItemPage() {
         )}
         {item.notes && <Row label="Notes">{item.notes}</Row>}
       </section>
+
+      {item.priceHistory.length > 0 && (
+        <section className="card space-y-2">
+          <h2 className="font-medium">Price per unit</h2>
+          <Suspense
+            fallback={<div className="h-56" aria-label="Loading chart" />}
+          >
+            <PriceChart
+              history={item.priceHistory}
+              costPerUnitCents={Math.round(item.costBasisCents / item.quantity)}
+              costLabel={
+                item.basisSource === 'baseline'
+                  ? 'Value when added'
+                  : 'Your cost'
+              }
+            />
+          </Suspense>
+        </section>
+      )}
 
       {panel === 'none' && (
         <div className="flex flex-wrap gap-2">

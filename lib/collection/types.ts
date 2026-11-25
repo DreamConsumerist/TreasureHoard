@@ -35,6 +35,8 @@ export interface ItemOut {
   /** Latest known price for ONE unit, and the day it was seen. Null if never priced. */
   unitPriceCents: number | null
   priceAsOf: string | null
+  /** Unit price from at least 7 days before the latest one, or null if none yet. */
+  weekAgoPriceCents: number | null
 }
 
 export interface ItemDetailOut extends ItemOut {

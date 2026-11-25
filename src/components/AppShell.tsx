@@ -3,6 +3,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { NavLink, Outlet, useNavigate } from 'react-router'
+import { useRecurringCatchUp } from '../lib/queries.ts'
 import { QuickAddContext } from '../lib/quickAdd.ts'
 import { TransactionForm } from './TransactionForm.tsx'
 
@@ -32,6 +33,8 @@ export function AppShell() {
   const [formKey, setFormKey] = useState(0)
   const dialog = useRef<HTMLDialogElement>(null)
   const navigate = useNavigate()
+  // Creates recurring transactions that came due since the app was last open.
+  useRecurringCatchUp()
 
   useEffect(() => {
     const el = dialog.current
@@ -140,6 +143,9 @@ export function LedgerTabs() {
       </NavLink>
       <NavLink to="/ledger/accounts" className={tab}>
         Accounts
+      </NavLink>
+      <NavLink to="/ledger/recurring" className={tab}>
+        Recurring
       </NavLink>
     </div>
   )

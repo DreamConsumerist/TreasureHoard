@@ -171,3 +171,26 @@ export async function fetchSetCatalog(
   )) as RawPrice[]
   return mergeCatalog(products, prices)
 }
+
+export interface TcgPriceRow {
+  productId: number
+  subType: string
+  marketCents: number | null
+}
+
+/** Just a set's prices (no product list): what the daily sync needs. One request. */
+export async function fetchSetPrices(
+  fetchFn: typeof fetch,
+  categoryId: number,
+  groupId: number,
+): Promise<TcgPriceRow[]> {
+  const prices = (await getResults(
+    fetchFn,
+    `${BASE}/${categoryId}/${groupId}/prices`,
+  )) as RawPrice[]
+  return prices.map((p) => ({
+    productId: p.productId,
+    subType: p.subTypeName,
+    marketCents: dollarsToCents(p.marketPrice),
+  }))
+}

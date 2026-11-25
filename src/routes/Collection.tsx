@@ -8,8 +8,9 @@ import { GainBadge, ItemList, type ItemView } from '../components/ItemList.tsx'
 import { itemGain, itemValue, KIND_LABELS } from '../lib/collection.ts'
 import { useDebounced } from '../lib/hooks.ts'
 import { useItems, type ItemOut } from '../lib/queries.ts'
+import { weekChangeCents } from '../../lib/collection/valuation.ts'
 
-type Sort = 'value' | 'gain' | 'name' | 'date'
+type Sort = 'value' | 'gain' | 'movers' | 'name' | 'date'
 
 // The tiles/list choice is remembered per browser; it's display-only, so it
 // doesn't belong in the database.
@@ -17,9 +18,17 @@ const VIEW_KEY = 'treasurehoard.collectionView'
 const savedView = (): ItemView =>
   localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'tiles'
 
+/** Size of the 7-day move either way; -1 (sorts last) without a week of history. */
+const moveSize = (i: ItemOut) => {
+  const c = weekChangeCents(i)
+  return c === null ? -1 : Math.abs(c)
+}
+
 const sorters: Record<Sort, (a: ItemOut, b: ItemOut) => number> = {
   value: (a, b) => (itemValue(b) ?? -1) - (itemValue(a) ?? -1),
   gain: (a, b) => (itemGain(b) ?? -Infinity) - (itemGain(a) ?? -Infinity),
+  // Biggest 7-day move either way; items without a week of history go last.
+  movers: (a, b) => moveSize(b) - moveSize(a),
   name: (a, b) => a.name.localeCompare(b.name),
   date: (a, b) =>
     (b.soldDate ?? b.acquiredDate).localeCompare(a.soldDate ?? a.acquiredDate),
@@ -81,7 +90,10 @@ export default function Collection() {
         {(['owned', 'sold'] as const).map((s) => (
           <button
             key={s}
-            onClick={() => setStatus(s)}
+            onClick={() => {
+              setStatus(s)
+              if (s === 'sold' && sort === 'movers') setSort('value')
+            }}
             className={`rounded-lg px-3 py-1.5 text-sm ${status === s ? 'bg-zinc-200 font-medium dark:bg-zinc-800' : 'text-zinc-600 dark:text-zinc-400'}`}
           >
             {s === 'owned' ? 'Owned' : 'Sold'}
@@ -123,6 +135,9 @@ export default function Collection() {
         >
           <option value="value">Highest value</option>
           <option value="gain">Biggest gain</option>
+          {status === 'owned' && (
+            <option value="movers">Biggest movers (7 days)</option>
+          )}
           <option value="name">Name</option>
           <option value="date">
             {status === 'sold' ? 'Recently sold' : 'Recently added'}
@@ -169,8 +184,7 @@ export default function Collection() {
           </div>
           {status === 'owned' && (totals.oldest || totals.unpriced > 0) && (
             <p className="col-span-3 text-xs text-zinc-500">
-              {totals.oldest &&
-                `Prices as of ${totals.oldest} or later (from when items were added). `}
+              {totals.oldest && `Oldest price shown is from ${totals.oldest}. `}
               {totals.unpriced > 0 &&
                 `${totals.unpriced} item(s) have no price and are left out of the value.`}
             </p>

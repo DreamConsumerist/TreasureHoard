@@ -1,8 +1,9 @@
-// Settings: system status, the collection check, and log out. Price sync
-// health, overrides and import arrive in later steps.
+// Settings: system status, price sync health, the collection check, and log
+// out. Import arrives in a later step.
 
 import { useQuery } from '@tanstack/react-query'
 import { formatMoney } from '../../lib/ledger/money.ts'
+import { PriceSyncCard } from '../components/PriceSync.tsx'
 import { api } from '../lib/api.ts'
 import { useCollectionCheck } from '../lib/queries.ts'
 
@@ -33,6 +34,7 @@ export default function Settings() {
           Database: <span className={status.color}>{status.text}</span>
         </p>
       </section>
+      <PriceSyncCard />
       <section className="card space-y-2">
         <h2 className="font-medium">Collection check</h2>
         {check.isPending && <p className="text-sm text-zinc-500">Checking…</p>}

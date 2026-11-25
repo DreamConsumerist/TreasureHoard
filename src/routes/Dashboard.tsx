@@ -1,6 +1,12 @@
+import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 import { formatMoney } from '../../lib/ledger/money.ts'
 import { Amount } from '../components/Amount.tsx'
+import { DueCard } from '../components/DueCard.tsx'
+import { GainBadge, Thumb } from '../components/ItemList.tsx'
+import { OwedToYou } from '../components/OwedToYou.tsx'
+import { PriceChange } from '../components/PriceChange.tsx'
+import { StalePricesNotice } from '../components/PriceSync.tsx'
 import { TransactionList } from '../components/TransactionList.tsx'
 import { useDashboard } from '../lib/queries.ts'
 
@@ -11,7 +17,7 @@ function Stat({
 }: {
   label: string
   cents: number
-  hint?: string
+  hint?: ReactNode
 }) {
   return (
     <div className="card">
@@ -39,6 +45,7 @@ export default function Dashboard() {
         </Link>
       </header>
 
+      <StalePricesNotice />
       {isPending && <p className="text-sm text-zinc-500">Loading…</p>}
       {error && <p className="text-sm text-red-600">{error.message}</p>}
 
@@ -46,19 +53,28 @@ export default function Dashboard() {
         <>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <Stat
-              label="Net worth (book)"
-              cents={data.bookNetWorthCents}
-              hint="Assets − liabilities"
+              label="Net worth"
+              cents={data.marketNetWorthCents}
+              hint={`Book (collection at cost): ${formatMoney(data.bookNetWorthCents)}`}
             />
             <Stat
               label="Cash"
               cents={data.cashCents}
-              hint="Excludes the collection"
+              hint="Excludes the collection and money owed to you"
             />
             <Stat
-              label="Collection (at cost)"
-              cents={data.collectionCostCents}
-              hint="Market value arrives with price syncing"
+              label="Collection"
+              cents={data.collectionMarketCents}
+              hint={
+                <>
+                  Cost {formatMoney(data.collectionCostCents)} ·{' '}
+                  <GainBadge
+                    cents={
+                      data.collectionMarketCents - data.collectionCostCents
+                    }
+                  />
+                </>
+              }
             />
             <Stat
               label="Spent this month"
@@ -66,6 +82,53 @@ export default function Dashboard() {
               hint={`Last month: ${formatMoney(data.spending.lastMonthCents)}`}
             />
           </div>
+
+          <DueCard
+            due={data.recurring.due}
+            upcoming={data.recurring.upcoming}
+          />
+          <OwedToYou owed={data.owedToYou} />
+
+          {data.movers.length > 0 && (
+            <section className="card">
+              <div className="mb-2 flex items-center justify-between">
+                <h2 className="font-medium">Movers this week</h2>
+                <Link
+                  to="/collection"
+                  className="text-sm text-zinc-500 hover:underline"
+                >
+                  Collection
+                </Link>
+              </div>
+              <ul className="space-y-2">
+                {data.movers.map((m) => (
+                  <li key={m.itemId}>
+                    <Link
+                      to={`/collection/${m.itemId}`}
+                      className="flex items-center gap-3 hover:underline"
+                    >
+                      <Thumb src={m.imageUrl} size="h-10 w-7" />
+                      <span className="min-w-0 flex-1 truncate text-sm">
+                        {m.name}
+                        {m.quantity > 1 && (
+                          <span className="ml-1 text-zinc-500">
+                            ×{m.quantity}
+                          </span>
+                        )}
+                      </span>
+                      <span className="shrink-0 text-right">
+                        <Amount
+                          cents={m.valueCents}
+                          className="block text-sm"
+                        />
+                        <PriceChange cents={m.changeCents} />
+                      </span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
 
           {data.spending.topCategories.length > 0 && (
             <section className="card">

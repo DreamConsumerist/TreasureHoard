@@ -1,12 +1,19 @@
 // /ledger/new and /ledger/:id: the transaction form as a full page.
 // Transactions that belong to a collection item are shown read-only, with a
 // link to the item: they're edited from there so the books stay in step.
+// /ledger/new can arrive with a prefill in the router's location state
+// (Record payment on the Dashboard).
 
-import { Link, useNavigate, useParams } from 'react-router'
+import { Link, useLocation, useNavigate, useParams } from 'react-router'
+import { occurrenceDate } from '../../lib/ledger/recurring.ts'
 import { toNatural } from '../../lib/ledger/sign.ts'
 import { Amount } from '../components/Amount.tsx'
 import { LedgerTabs } from '../components/AppShell.tsx'
-import { TransactionForm } from '../components/TransactionForm.tsx'
+import type { RecurringPrefill } from '../components/RecurringForm.tsx'
+import {
+  TransactionForm,
+  type TransactionPrefill,
+} from '../components/TransactionForm.tsx'
 import {
   useAccounts,
   useDeleteTransaction,
@@ -61,6 +68,9 @@ function ReadOnlyTransaction({ txn }: { txn: TransactionOut }) {
 export default function TransactionPage() {
   const params = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
+  const prefill = (location.state as { prefill?: TransactionPrefill } | null)
+    ?.prefill
   const id = params.id ? Number(params.id) : null
   const txn = useTransaction(id)
   const del = useDeleteTransaction()
@@ -95,16 +105,58 @@ export default function TransactionPage() {
               balance.
             </p>
           )}
+          {txn.data?.recurringTemplateId != null && (
+            <p className="mb-3 text-sm text-zinc-500">
+              Created by a recurring transaction.{' '}
+              <Link
+                to={`/ledger/recurring/${txn.data.recurringTemplateId}`}
+                className="underline"
+              >
+                Edit the recurring transaction
+              </Link>{' '}
+              to change future ones.
+            </p>
+          )}
           <TransactionForm
             key={txn.data?.id ?? 'new'}
             initial={txn.data}
+            prefill={id ? undefined : prefill}
             onSaved={back}
           />
         </div>
       )}
 
       {txn.data && !linked && (
-        <div className="mt-4 flex justify-end">
+        <div className="mt-4 flex justify-between gap-2">
+          {txn.data.kind === 'normal' &&
+          txn.data.recurringTemplateId === null ? (
+            <button
+              onClick={() => {
+                const t = txn.data
+                const state: { prefill: RecurringPrefill } = {
+                  prefill: {
+                    description: t.description,
+                    postings: t.postings.map((p) => ({
+                      accountId: p.accountId,
+                      amountCents: p.amountCents,
+                      memo: p.memo,
+                    })),
+                    // This one is already entered: start a month later.
+                    startDate: occurrenceDate(
+                      { frequency: 'month', interval: 1, startDate: t.date },
+                      1,
+                    ),
+                  },
+                }
+                navigate('/ledger/recurring/new', { state })
+              }}
+              className="btn"
+            >
+              Make recurring
+            </button>
+          ) : (
+            <span />
+          )}
           <button
             onClick={() => {
               if (confirm('Delete this transaction? This cannot be undone.')) {

@@ -9,7 +9,9 @@ import {
   itemValue,
 } from '../lib/collection.ts'
 import type { ItemOut } from '../lib/queries.ts'
+import { weekChangeCents } from '../../lib/collection/valuation.ts'
 import { Amount } from './Amount.tsx'
+import { PriceChange } from './PriceChange.tsx'
 
 export function Thumb({
   src,
@@ -122,9 +124,14 @@ function ItemTiles({ items }: { items: ItemOut[] }) {
                   )}
                   <GainBadge cents={itemGain(item)} />
                 </span>
-                {!sold && item.basisSource === 'baseline' && (
-                  <span className="text-right text-[11px] text-zinc-500">
-                    gain since added
+                {!sold && (
+                  <span className="flex items-baseline justify-between gap-2">
+                    <PriceChange cents={weekChangeCents(item)} suffix="7d" />
+                    {item.basisSource === 'baseline' && (
+                      <span className="ml-auto text-[11px] text-zinc-500">
+                        gain since added
+                      </span>
+                    )}
                   </span>
                 )}
               </span>
@@ -175,6 +182,13 @@ function ItemRows({ items }: { items: ItemOut[] }) {
                     </span>
                   )}
                 </span>
+                {!sold && (
+                  <PriceChange
+                    cents={weekChangeCents(item)}
+                    suffix="7d"
+                    className="block"
+                  />
+                )}
               </span>
             </Link>
           </li>
