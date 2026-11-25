@@ -77,6 +77,25 @@ describe('normalizePriceChartingUrl', () => {
     })
   })
 
+  it('accepts punctuation in the product slug, encoded or typed', () => {
+    const expected = {
+      url: 'https://www.pricecharting.com/game/playstation-5/clive-barker%27s-hellraiser-revival',
+      path: '/game/playstation-5/clive-barker%27s-hellraiser-revival',
+      platform: 'playstation-5',
+    }
+    expect(
+      normalizePriceChartingUrl(
+        'https://www.pricecharting.com/game/playstation-5/clive-barker%27s-hellraiser-revival',
+      ),
+    ).toEqual(expected)
+    // A pasted apostrophe is encoded the same way by the URL parser.
+    expect(
+      normalizePriceChartingUrl(
+        "https://www.pricecharting.com/game/playstation-5/clive-barker's-hellraiser-revival",
+      ),
+    ).toEqual(expected)
+  })
+
   it.each([
     'not a url',
     'https://evil.example.com/game/snes/x',

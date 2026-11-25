@@ -3,7 +3,8 @@
 // scheduled functions.
 //
 //   Daily at 21:00 UTC (about an hour after TCGCSV's ~20:05 UTC update):
-//   card and sealed prices. On Mondays, game and hardware prices too.
+//   card and sealed prices. On Mondays, game and hardware prices and the card
+//   search index too.
 //
 // Scheduled functions only fire on the published production deploy. To run
 // it sooner, use "Run now" on this function in the Netlify UI.
@@ -22,7 +23,7 @@ export default async (_req: Request, context: Context) => {
   }
 
   const jobs: SyncJob[] = ['tcg']
-  if (new Date().getUTCDay() === 1) jobs.push('games') // Monday
+  if (new Date().getUTCDay() === 1) jobs.push('games', 'catalog') // Monday
 
   const runIds: number[] = []
   for (const job of jobs) {

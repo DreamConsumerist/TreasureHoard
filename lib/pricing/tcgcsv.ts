@@ -194,3 +194,55 @@ export async function fetchSetPrices(
     marketCents: dollarsToCents(p.marketPrice),
   }))
 }
+
+// --- For the card search index (lib/pricing/catalog.ts) ---------------------
+
+export interface TcgCatalogGroup {
+  groupId: number
+  name: string
+  abbreviation: string | null
+  publishedOn: string | null // 'YYYY-MM-DD'
+  /** Changes whenever TCGplayer edits the set's products. */
+  modifiedOn: string | null
+}
+
+/** Every set of a game, released or not, with its last-modified stamp. */
+export async function fetchCatalogGroups(
+  fetchFn: typeof fetch,
+  categoryId: number,
+): Promise<TcgCatalogGroup[]> {
+  const rows = (await getResults(fetchFn, `${BASE}/${categoryId}/groups`)) as {
+    groupId: number
+    name: string
+    abbreviation?: string | null
+    publishedOn?: string | null
+    modifiedOn?: string | null
+  }[]
+  return rows.map((g) => ({
+    groupId: g.groupId,
+    name: g.name,
+    abbreviation: g.abbreviation || null,
+    publishedOn: g.publishedOn ? g.publishedOn.slice(0, 10) : null,
+    modifiedOn: g.modifiedOn ?? null,
+  }))
+}
+
+/** A set's products without prices. One request. */
+export async function fetchSetProducts(
+  fetchFn: typeof fetch,
+  categoryId: number,
+  groupId: number,
+): Promise<Omit<TcgProduct, 'prices'>[]> {
+  const products = (await getResults(
+    fetchFn,
+    `${BASE}/${categoryId}/${groupId}/products`,
+  )) as RawProduct[]
+  return mergeCatalog(products, []).map((p) => ({
+    productId: p.productId,
+    name: p.name,
+    number: p.number,
+    rarity: p.rarity,
+    imageUrl: p.imageUrl,
+    sealed: p.sealed,
+  }))
+}

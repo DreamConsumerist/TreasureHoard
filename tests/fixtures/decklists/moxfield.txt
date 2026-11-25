@@ -1,0 +1,9 @@
+1 Ghalta, Primal Hunger (RIX) 130 *F*
+1 Beast Within (C21) 205
+1 Craterhoof Behemoth (CMM) 286
+1 Ghalta, Primal Hunger (CMM) 561 *E*
+1 Sol Ring (PLST) C21-263
+30 Forest (FDN) 280
+
+SIDEBOARD:
+1 Heroic Intervention (AER) 109

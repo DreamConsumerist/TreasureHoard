@@ -23,6 +23,8 @@ import {
 } from '../auth/session.ts'
 import { catalogRoutes } from './collection/catalog.ts'
 import { checkRoutes } from './collection/check.ts'
+import { groupRoutes } from './collection/groups.ts'
+import { importRoutes } from './collection/import.ts'
 import { itemRoutes } from './collection/items.ts'
 import { handleError } from './errors.ts'
 import { accountRoutes } from './ledger/accounts.ts'
@@ -132,9 +134,11 @@ export function createApp(db: Db, deps: AppDeps = {}) {
   app.route('/recurring', recurringRoutes(db))
 
   // --- Collection ---
-  app.route('/catalog', catalogRoutes(fetchFn))
+  app.route('/catalog', catalogRoutes(db, fetchFn))
   app.route('/items', itemRoutes(db))
+  app.route('/groups', groupRoutes(db))
   app.route('/collection', checkRoutes(db))
+  app.route('/collection/import', importRoutes(db))
   app.route('/prices', priceRoutes(db, fetchFn))
 
   return app

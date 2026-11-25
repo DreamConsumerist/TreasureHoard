@@ -75,7 +75,31 @@ Rules:
 - **`items`**: `id`, `kind` (`card` | `sealed` | `game` | `hardware`), `name`, `quantity`, `condition`, `cost_basis_cents` (total for the row), `basis_source` (`purchase` | `baseline`), `acquired_date`, `acquired_txn_id` (→ transactions; null only for a $0 basis, which books nothing), `sold_date` (what marks an item sold), `sold_txn_id` (null for a $0 giveaway of a $0 item), `sale_proceeds_cents`, `notes`. Both transaction links are `on delete restrict`.
 - **`card_details`**: `item_id`, `category_id` and `group_id` (TCGplayer game and set, so syncs fetch only owned sets), `tcgplayer_product_id`, `sub_type` (e.g. Normal, Foil), `set_name`, `number`, `rarity`, `image_url`. Used by both `card` and `sealed`.
 - **`game_details`**: `item_id`, `platform`, `pricecharting_url` (null = priced by hand), `variant` (`loose` | `cib` | `new`), `image_url` (the PriceCharting cover photo, saved when the item is added; null if none). Used by both `game` and `hardware`.
-- **`wishlist_items`** *(Step 6)*: product reference (`source`, `external_id`, `variant`), `target_price_cents`, `notes`.
+- **`item_groups`**: `name` (unique, case-insensitive), `notes`, `cover_item_id` (→ items, set null; null = the group's most valuable item's picture). Items link to it by **`items.item_group_id`** (set null on delete): one group per item. Not to be confused with `card_details.group_id`, TCGplayer's set.
+- **`catalog_groups`** / **`catalog_products`**: the card search index, a copy of TCGCSV's sets (`abbreviation`, `published_on`, `modified_on`, `products_synced_at`) and products (`name`, `number`, `rarity`, `image_url`, `sealed`) for the three games. No prices. See "Card search index" below.
+- **`wishlist_items`** *(deferred)*: product reference (`source`, `external_id`, `variant`), `target_price_cents`, `notes`.
+
+### Groups
+
+- A **group** (a deck, a binder) is an organizing layer only: each item keeps its own cost, price and ledger entry, and the group adds up its **unsold** items with the valuation rules below (never-priced items at cost). The ledger is never touched.
+- Sold items keep their group for history but aren't counted. A partial sale's split-off copy keeps the group.
+- The Collection page has a **Grouped / Individual** toggle: grouped shows each group as one tile, then ungrouped items. **Select mode** puts many items into a group at once.
+
+### Decklist import
+
+- `POST /api/collection/import/preview` parses a pasted list (Moxfield, Archidekt, MTG Arena or plain names: `lib/collection/decklist.ts`) and matches each line against the card search index (`lib/api/collection/import.ts`):
+  1. set code + collector number (matched);
+  2. name + number (guessed; promos and The List, whose set codes don't line up with TCGplayer's sets);
+  3. set + name, then name alone if only one printing exists (guessed).
+
+  Otherwise the line offers its candidate printings. Foil etched prefers TCGplayer's "(Foil Etched)" product. Maybeboard cards are left out.
+- **Copies already owned** (same printing and sub-type), by `planLine`, which both the server and the review screen use:
+  1. copies in the target group count as present;
+  2. copies in no group are moved in (a row is split if only part is needed);
+  3. the rest are added new.
+
+  Copies in other groups are never touched: each deck gets its own copies.
+- New copies are booked as **already owned**, at market value on the import date (opening entries, through the same `createItem` as hand entry), in **one database transaction**: all or nothing. Prices are loaded by the browser one set at a time before importing, so no single request runs long.
 
 Collection scope: MTG, One Piece and Riftbound cards and sealed product (TCGCSV categories 1, 68, 89), plus video games, consoles and accessories (PriceCharting). No graded cards.
 
@@ -109,6 +133,13 @@ Collection scope: MTG, One Piece and Riftbound cards and sealed product (TCGCSV 
 - Downloads only the `/prices` file, and only for sets (groups) that contain unsold owned items (wishlist entries from Step 6). Product details are stored at lookup time.
 - Records every sub-type of each owned product, matched by TCGplayer product ID. A null market price is skipped, so the last good price stays.
 - Sends an identifying User-Agent: TCGCSV answers 401 to requests that don't name their application.
+
+### Card search index
+
+- TCGCSV has no search: it serves one product file per set (459 for Magic). To find a card by name without knowing its set, the `catalog` sync job (`lib/pricing/catalog.ts`) copies every set's product list into `catalog_groups` / `catalog_products`.
+- **First build:** every set of the three games, one product file every 0.5 s. **Refresh:** weekly with the Monday sync, fetching only sets that are new or whose `modifiedOn` changed (a failed set is retried next time). Each set is replaced in one database transaction.
+- **Search** (`GET /api/catalog/tcg/search`): every word must appear in the name. Exact names rank first, then names starting with the query, then newest set. Prices still come live from the per-set lookup, not from the index.
+- Scryfall (Magic's card database) was considered instead. It has excellent search, but doesn't say which TCGplayer set a printing is in, and the app needs that to price it: matching its set codes to TCGplayer's worked for only about a third of sets. It also doesn't cover One Piece or Riftbound.
 
 ### PriceCharting (games): scraper
 Scraping is against PriceCharting's terms; for this personal, low-volume use that risk is accepted. The scraper is built to stay polite and to fail visibly:
@@ -169,9 +200,9 @@ TreasureHoard/
 │  └─ index.ts                   # Drizzle client
 ├─ lib/                          # pure logic, no Netlify dependencies
 │  ├─ api/                       # Hono app: createApp(db, { fetch }) + ledger/ (incl. recurring), collection/ and prices route modules
-│  ├─ collection/                # posting builders, price keys, Zod schemas, response types
+│  ├─ collection/                # posting builders, price keys, valuation, decklist parsing, Zod schemas, response types
 │  ├─ ledger/                    # money, signs, posting rules, recurring dates and rescaling, account tree, Zod schemas, shared types
-│  ├─ pricing/                   # tcgcsv, pricecharting (fetch + parse), snapshots, sync, syncKey
+│  ├─ pricing/                   # tcgcsv, pricecharting (fetch + parse), snapshots, sync, syncKey, catalog (search index)
 │  └─ import/                    # OFX / CSV parsers (later)
 ├─ scripts/scrape-local.ts       # fallback scraper runner
 └─ tests/                        # Vitest; API tests run createApp() on in-memory PGlite with real migrations
@@ -221,5 +252,12 @@ Each milestone ends with a working, deployed app.
 3. **Collection:** cards, sealed, games and hardware; product lookup; buy, baseline and sell flows.
 4. **Pricing:** TCGCSV sync, then the PriceCharting scraper; dashboard with collection value, gain/loss and net worth.
 5. **Recurring transactions:** templates, lazy generation as pending, due alerts.
-6. **Wishlist:** target prices, alerts, conversion to owned items.
-7. **Polish:** PWA install, reports and charts, bank import.
+6. **Installable app (PWA)**, pulled forward from Polish.
+7. **Groups, card search by name, decklist import** ([plan](docs/plans/07-groups-and-search.md)).
+8. **Polish:** reports and charts, bank import.
+
+**Deferred** (not scheduled):
+- **Wishlist:** target prices, alerts, conversion to owned items.
+- **Push notifications:** due bills, wishlist alerts.
+- **Sell a whole group** for one price, split across its cards by market value.
+- **Buy a whole deck** (e.g. a precon) for one price, with cost split the same way.

@@ -6,10 +6,17 @@
 // cache them too. PriceCharting lookups are never cached: each one is a single
 // fetch made because you pasted a URL and pressed Look up.
 
+import { and, desc, eq, ilike, isNotNull, sql, type SQL } from 'drizzle-orm'
 import { Hono } from 'hono'
 import { z } from 'zod'
+import { catalogGroups, catalogProducts } from '../../../db/schema.ts'
+import type { Db } from '../../../db/types.ts'
 import { GAME_KEYS } from '../../collection/schemas.ts'
-import type { PriceChartingLookupOut } from '../../collection/types.ts'
+import type {
+  CatalogHit,
+  CatalogSearchOut,
+  PriceChartingLookupOut,
+} from '../../collection/types.ts'
 import {
   fetchPriceChartingPage,
   normalizePriceChartingUrl,
@@ -34,7 +41,76 @@ function memo<T>() {
   }
 }
 
-export function catalogRoutes(fetchFn: typeof fetch) {
+const SEARCH_LIMIT = 60
+/** Escapes LIKE wildcards so a search for "50%" matches literally. */
+const likeEscape = (s: string) => s.replace(/[\\%_]/g, (ch) => `\\${ch}`)
+
+/**
+ * Name search over the card search index (lib/pricing/catalog.ts). Every word
+ * must appear in the name, in any order. Ranking: exact name, then names
+ * starting with the query, then newest set first.
+ */
+export async function searchCatalog(
+  db: Db,
+  opts: {
+    categoryId: number
+    q: string
+    sealed?: boolean
+    groupId?: number
+    limit?: number
+  },
+): Promise<CatalogSearchOut> {
+  const [built] = await db
+    .select({ n: sql<number>`count(*)`.mapWith(Number) })
+    .from(catalogGroups)
+    .where(
+      and(
+        eq(catalogGroups.categoryId, opts.categoryId),
+        isNotNull(catalogGroups.productsSyncedAt),
+      ),
+    )
+  if (!built?.n) return { indexed: false, results: [] }
+
+  const words = opts.q.split(/\s+/).filter(Boolean)
+  const where: SQL[] = [eq(catalogProducts.categoryId, opts.categoryId)]
+  for (const w of words)
+    where.push(ilike(catalogProducts.name, `%${likeEscape(w)}%`))
+  if (opts.sealed !== undefined)
+    where.push(eq(catalogProducts.sealed, opts.sealed))
+  if (opts.groupId) where.push(eq(catalogProducts.groupId, opts.groupId))
+
+  const q = opts.q.trim().toLowerCase()
+  const rows = await db
+    .select({
+      productId: catalogProducts.productId,
+      groupId: catalogProducts.groupId,
+      setName: catalogGroups.name,
+      setCode: catalogGroups.abbreviation,
+      publishedOn: catalogGroups.publishedOn,
+      name: catalogProducts.name,
+      number: catalogProducts.number,
+      rarity: catalogProducts.rarity,
+      imageUrl: catalogProducts.imageUrl,
+      sealed: catalogProducts.sealed,
+    })
+    .from(catalogProducts)
+    .innerJoin(
+      catalogGroups,
+      eq(catalogGroups.groupId, catalogProducts.groupId),
+    )
+    .where(and(...where))
+    .orderBy(
+      desc(sql`lower(${catalogProducts.name}) = ${q}`),
+      desc(sql`lower(${catalogProducts.name}) like ${`${likeEscape(q)}%`}`),
+      sql`${catalogGroups.publishedOn} desc nulls last`,
+      catalogProducts.name,
+      catalogProducts.productId,
+    )
+    .limit(opts.limit ?? SEARCH_LIMIT)
+  return { indexed: true, results: rows satisfies CatalogHit[] }
+}
+
+export function catalogRoutes(db: Db, fetchFn: typeof fetch) {
   const r = new Hono()
   const groupsCache = memo<Awaited<ReturnType<typeof fetchGroups>>>()
   const catalogCache = memo<Awaited<ReturnType<typeof fetchSetCatalog>>>()
@@ -86,6 +162,31 @@ export function catalogRoutes(fetchFn: typeof fetch) {
       )
       c.header('Cache-Control', 'private, max-age=3600')
       return c.json(products)
+    },
+  )
+
+  // GET /api/catalog/tcg/search?game=mtg&q=ghalta[&sealed=false][&groupId=…]
+  r.get(
+    '/tcg/search',
+    validate(
+      'query',
+      z.object({
+        game: z.enum(GAME_KEYS),
+        q: z.string().trim().min(2).max(100),
+        sealed: z.enum(['true', 'false']).optional(),
+        groupId: z.coerce.number().pipe(z.int().positive()).optional(),
+      }),
+    ),
+    async (c) => {
+      const { game, q, sealed, groupId } = c.req.valid('query')
+      return c.json(
+        await searchCatalog(db, {
+          categoryId: GAMES[game].categoryId,
+          q,
+          sealed: sealed === undefined ? undefined : sealed === 'true',
+          groupId,
+        }),
+      )
     },
   )
 

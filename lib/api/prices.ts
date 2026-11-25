@@ -21,11 +21,13 @@ const DAY_MS = 24 * 60 * 60_000
 const STALE_AFTER_MS: Record<SyncJob, number> = {
   tcg: 2 * DAY_MS,
   games: 8 * DAY_MS,
+  catalog: 8 * DAY_MS,
 }
 
-const syncStartSchema = z.object({ job: z.enum(['tcg', 'games']) })
+const syncStartSchema = z.object({ job: z.enum(['tcg', 'games', 'catalog']) })
 
 async function targetCount(db: Db, job: SyncJob): Promise<number> {
+  if (job === 'catalog') return 1 // the index covers every set, owned or not
   const [row] =
     job === 'tcg'
       ? await db
@@ -54,7 +56,7 @@ export function priceRoutes(db: Db, fetchFn: typeof fetch) {
     const runs = await latestRuns(db)
     const now = Date.now()
     const out: SyncJobStatus[] = []
-    for (const job of ['tcg', 'games'] as const) {
+    for (const job of ['tcg', 'games', 'catalog'] as const) {
       const run = runs.find((x) => x.job === job)
       const success = await lastSuccess(db, job)
       const hasTargets = (await targetCount(db, job)) > 0
@@ -74,8 +76,10 @@ export function priceRoutes(db: Db, fetchFn: typeof fetch) {
             }
           : null,
         lastSuccessAt: success?.toISOString() ?? null,
+        // A never-built index isn't "stale": the search box offers to build it.
         stale:
           hasTargets &&
+          (job === 'catalog' ? Boolean(success) : true) &&
           (!success || now - success.getTime() > STALE_AFTER_MS[job]),
       })
     }

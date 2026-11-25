@@ -1,0 +1,6 @@
+1x Ghalta, Primal Hunger (rix) 130 *F* [Commander{top}]
+1x Beast Within (c21) 205 [Removal] ^Have,#37d67a^
+1x Craterhoof Behemoth (cmm) 286 [Finisher]
+1x Hydroid Krasis (rna) 183 [Maybeboard{noDeck}{noPrice}]
+29x Forest (fdn) 280 [Land]
+1x Forest (fdn) 280 [Land]

@@ -11,6 +11,8 @@ import AccountsPage from './routes/AccountsPage.tsx'
 import Collection from './routes/Collection.tsx'
 import CollectionNew from './routes/CollectionNew.tsx'
 import Dashboard from './routes/Dashboard.tsx'
+import DecklistImport from './routes/DecklistImport.tsx'
+import GroupPage from './routes/GroupPage.tsx'
 import ItemPage from './routes/ItemPage.tsx'
 import Login from './routes/Login.tsx'
 import Recurring from './routes/Recurring.tsx'
@@ -41,6 +43,8 @@ const router = createBrowserRouter([
       { path: '/ledger/:id', element: <TransactionPage /> },
       { path: '/collection', element: <Collection /> },
       { path: '/collection/new', element: <CollectionNew /> },
+      { path: '/collection/groups/:id', element: <GroupPage /> },
+      { path: '/collection/import', element: <DecklistImport /> },
       { path: '/collection/:id', element: <ItemPage /> },
       { path: '/settings', element: <Settings /> },
     ],

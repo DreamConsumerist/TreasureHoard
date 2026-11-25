@@ -1,5 +1,10 @@
 // Collection items, as a grid of tiles or as compact rows.
+//
+// With `selection`, tapping an item ticks it instead of opening it (select
+// mode on the Collection and group pages). With `showGroup`, each item shows
+// the collection group it's in.
 
+import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 import { formatMoney } from '../../lib/ledger/money.ts'
 import {
@@ -51,27 +56,94 @@ export function GainBadge({ cents }: { cents: number | null }) {
 
 export type ItemView = 'tiles' | 'list'
 
+export interface Selection {
+  selected: ReadonlySet<number>
+  toggle: (id: number) => void
+}
+
+interface ListOptions {
+  selection?: Selection
+  showGroup?: boolean
+}
+
 export function ItemList({
   items,
   empty,
   view,
+  selection,
+  showGroup = false,
 }: {
   items: ItemOut[]
   empty: string
   view: ItemView
-}) {
+} & ListOptions) {
   if (items.length === 0) {
     return <p className="py-6 text-center text-sm text-zinc-500">{empty}</p>
   }
   return view === 'tiles' ? (
-    <ItemTiles items={items} />
+    <ItemTiles items={items} selection={selection} showGroup={showGroup} />
   ) : (
-    <ItemRows items={items} />
+    <ItemRows items={items} selection={selection} showGroup={showGroup} />
+  )
+}
+
+/** A link to the item, or a tick-box button in select mode. */
+function ItemTarget({
+  item,
+  selection,
+  className,
+  children,
+}: {
+  item: ItemOut
+  selection?: Selection
+  className: string
+  children: ReactNode
+}) {
+  if (!selection) {
+    return (
+      <Link to={`/collection/${item.id}`} className={className}>
+        {children}
+      </Link>
+    )
+  }
+  const on = selection.selected.has(item.id)
+  return (
+    <button
+      type="button"
+      onClick={() => selection.toggle(item.id)}
+      aria-pressed={on}
+      className={`${className} relative w-full text-left ${on ? 'ring-2 ring-zinc-900 dark:ring-zinc-100' : ''}`}
+    >
+      <span
+        aria-hidden
+        className={`absolute top-2 left-2 z-10 flex h-5 w-5 items-center justify-center rounded border text-xs ${
+          on
+            ? 'border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900'
+            : 'border-zinc-400 bg-white dark:bg-zinc-900'
+        }`}
+      >
+        {on ? '✓' : ''}
+      </span>
+      {children}
+    </button>
+  )
+}
+
+function GroupLabel({ item }: { item: ItemOut }) {
+  if (!item.itemGroup) return null
+  return (
+    <span className="truncate text-[11px] text-zinc-500">
+      ▣ {item.itemGroup.name}
+    </span>
   )
 }
 
 /** Grid of tiles: image on top, then name, value and gain. */
-function ItemTiles({ items }: { items: ItemOut[] }) {
+function ItemTiles({
+  items,
+  selection,
+  showGroup,
+}: { items: ItemOut[] } & ListOptions) {
   return (
     <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
       {items.map((item) => {
@@ -80,8 +152,9 @@ function ItemTiles({ items }: { items: ItemOut[] }) {
         const image = item.card?.imageUrl ?? item.game?.imageUrl
         return (
           <li key={item.id}>
-            <Link
-              to={`/collection/${item.id}`}
+            <ItemTarget
+              item={item}
+              selection={selection}
               className="group flex h-full flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white hover:border-zinc-400 dark:border-zinc-800 dark:bg-zinc-900 dark:hover:border-zinc-600"
             >
               <span className="relative block aspect-[5/7] bg-zinc-100 dark:bg-zinc-800">
@@ -116,6 +189,7 @@ function ItemTiles({ items }: { items: ItemOut[] }) {
                 <span className="truncate text-xs text-zinc-500">
                   {itemSubtitle(item)}
                 </span>
+                {showGroup && <GroupLabel item={item} />}
                 <span className="mt-auto flex items-baseline justify-between gap-2 pt-1">
                   {value === null ? (
                     <span className="text-sm text-zinc-500">—</span>
@@ -135,7 +209,7 @@ function ItemTiles({ items }: { items: ItemOut[] }) {
                   </span>
                 )}
               </span>
-            </Link>
+            </ItemTarget>
           </li>
         )
       })}
@@ -144,7 +218,11 @@ function ItemTiles({ items }: { items: ItemOut[] }) {
 }
 
 /** Compact rows: thumbnail, name and subtitle, value and gain on the right. */
-function ItemRows({ items }: { items: ItemOut[] }) {
+function ItemRows({
+  items,
+  selection,
+  showGroup,
+}: { items: ItemOut[] } & ListOptions) {
   return (
     <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
       {items.map((item) => {
@@ -152,9 +230,10 @@ function ItemRows({ items }: { items: ItemOut[] }) {
         const value = sold ? item.saleProceedsCents : itemValue(item)
         return (
           <li key={item.id}>
-            <Link
-              to={`/collection/${item.id}`}
-              className="flex items-center gap-3 px-1 py-2 hover:bg-zinc-100 dark:hover:bg-zinc-900"
+            <ItemTarget
+              item={item}
+              selection={selection}
+              className={`flex items-center gap-3 py-2 hover:bg-zinc-100 dark:hover:bg-zinc-900 ${selection ? 'pr-1 pl-9' : 'px-1'}`}
             >
               <Thumb src={item.card?.imageUrl ?? item.game?.imageUrl} />
               <span className="min-w-0 flex-1">
@@ -167,6 +246,11 @@ function ItemRows({ items }: { items: ItemOut[] }) {
                 <span className="block truncate text-sm text-zinc-500">
                   {itemSubtitle(item)}
                 </span>
+                {showGroup && item.itemGroup && (
+                  <span className="block">
+                    <GroupLabel item={item} />
+                  </span>
+                )}
               </span>
               <span className="shrink-0 text-right">
                 {value === null ? (
@@ -190,7 +274,7 @@ function ItemRows({ items }: { items: ItemOut[] }) {
                   />
                 )}
               </span>
-            </Link>
+            </ItemTarget>
           </li>
         )
       })}

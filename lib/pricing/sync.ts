@@ -1,7 +1,9 @@
 // Price sync: refreshes the prices of everything you own.
 //
-//   tcg    TCGCSV, daily. One prices file per owned set.
-//   games  PriceCharting, weekly. One page per owned product, 3 s apart.
+//   tcg      TCGCSV, daily. One prices file per owned set.
+//   games    PriceCharting, weekly. One page per owned product, 3 s apart.
+//   catalog  TCGCSV, weekly. The card search index (lib/pricing/catalog.ts):
+//            new and changed sets only.
 //
 // A run is started in two halves so the UI sees it immediately:
 //   startRun   checks the guards and records a `running` row in sync_runs
@@ -20,10 +22,11 @@ import {
   fetchPriceChartingPage,
   normalizePriceChartingUrl,
 } from './pricecharting.ts'
+import { syncCatalog } from './catalog.ts'
 import { recordSnapshot } from './snapshots.ts'
 import { fetchSetPrices } from './tcgcsv.ts'
 
-export type SyncJob = 'tcg' | 'games'
+export type SyncJob = 'tcg' | 'games' | 'catalog'
 export type SyncTrigger = 'schedule' | 'manual'
 
 /** A run still `running` after this long is assumed to have crashed (background limit is 15 min). */
@@ -129,7 +132,9 @@ export async function executeRun(
   const outcome: Outcome = { ok: 0, failed: 0, errors: [] }
   try {
     if (run.job === 'tcg') await syncTcg(db, fetchFn, today, outcome)
-    else await syncGames(db, fetchFn, today, sleep, outcome)
+    else if (run.job === 'games')
+      await syncGames(db, fetchFn, today, sleep, outcome)
+    else await syncCatalog(db, fetchFn, sleep, outcome)
   } catch (err) {
     // Something outside a single target broke (e.g. the database query).
     outcome.failed++
@@ -138,6 +143,7 @@ export async function executeRun(
   await db
     .update(syncRuns)
     .set({
+      // Nothing failing is ok, even with nothing to do (an unchanged catalog).
       status:
         outcome.failed === 0 ? 'ok' : outcome.ok === 0 ? 'failed' : 'partial',
       finishedAt: new Date(),

@@ -3,9 +3,13 @@
 //   2. Details: name, quantity, condition, notes.
 //   3. How you got it: bought (a purchase transaction) or already owned
 //      (an opening entry at today's value, pre-filled from the lookup).
+//
+// "Save and add another" stays here, keeping the kind, game, group,
+// condition and how-you-got-it, and clears the item: entering a deck card
+// after card is search → pick → save. ?group=<id> preselects a group.
 
 import { useState, type FormEvent } from 'react'
-import { useNavigate } from 'react-router'
+import { useNavigate, useSearchParams } from 'react-router'
 import { ITEM_KINDS, type ItemKind } from '../../lib/collection/accounting.ts'
 import type { ItemCreate } from '../../lib/collection/schemas.ts'
 import {
@@ -22,7 +26,12 @@ import {
 } from '../components/PriceChartingLookup.tsx'
 import { TcgLookup, type TcgPick } from '../components/TcgLookup.tsx'
 import { CONDITIONS, KIND_SINGULAR, VARIANT_LABELS } from '../lib/collection.ts'
-import { todayLocal, useCreateItem } from '../lib/queries.ts'
+import {
+  todayLocal,
+  useCreateItem,
+  useGroups,
+  type GameKey,
+} from '../lib/queries.ts'
 
 type Source =
   | { type: 'tcg'; pick: TcgPick }
@@ -31,7 +40,13 @@ type Source =
 
 export default function CollectionNew() {
   const navigate = useNavigate()
+  const [params] = useSearchParams()
   const create = useCreateItem()
+  const groups = useGroups()
+  const [groupId, setGroupId] = useState(params.get('group') ?? '')
+  // Remembered across "Save and add another".
+  const [lastGame, setLastGame] = useState<GameKey | undefined>()
+  const [added, setAdded] = useState<string | null>(null)
   const [kind, setKind] = useState<ItemKind | null>(null)
   const [source, setSource] = useState<Source | null>(null)
 
@@ -79,6 +94,8 @@ export default function CollectionNew() {
 
   function pickTcg(pick: TcgPick) {
     setSource({ type: 'tcg', pick })
+    setLastGame(pick.game)
+    setAdded(null)
     setName(pick.product.name)
     setAmountTouched(false)
   }
@@ -118,6 +135,9 @@ export default function CollectionNew() {
 
   function submit(e: FormEvent) {
     e.preventDefault()
+    const another =
+      (e.nativeEvent as SubmitEvent).submitter?.getAttribute('name') ===
+      'another'
     if (!canSave || kind === null || source === null || amountCents === null)
       return
     const body: ItemCreate = {
@@ -138,6 +158,7 @@ export default function CollectionNew() {
       ...(unitPrice !== null && {
         observedPrice: { priceCents: unitPrice, asOf: todayLocal() },
       }),
+      ...(groupId && { itemGroupId: Number(groupId) }),
     }
     if (source.type === 'tcg') {
       const { pick } = source
@@ -160,13 +181,33 @@ export default function CollectionNew() {
       }
     }
     create.mutate(body, {
-      onSuccess: (item) => navigate(`/collection/${item.id}`),
+      onSuccess: (item) => {
+        if (!another) {
+          navigate(`/collection/${item.id}`)
+          return
+        }
+        // Clear the item; keep kind, game, group, condition, mode, date, account.
+        setAdded(`${item.name}${item.quantity > 1 ? ` ×${item.quantity}` : ''}`)
+        setSource(null)
+        setName('')
+        setQuantity('1')
+        setNotes('')
+        setManualPrice('')
+        setAmount('')
+        setAmountTouched(mode === 'purchase')
+        window.scrollTo({ top: 0 })
+      },
     })
   }
 
   return (
     <div className="max-w-2xl space-y-6">
       <h1 className="text-xl font-semibold">Add to collection</h1>
+      {added && (
+        <p className="rounded-lg bg-green-50 p-3 text-sm text-green-800 dark:bg-green-950 dark:text-green-200">
+          Added {added}. Next one:
+        </p>
+      )}
 
       {/* 1. What it is */}
       <section className="card space-y-4">
@@ -231,7 +272,11 @@ export default function CollectionNew() {
         )}
 
         {kind && !source && tcg && (
-          <TcgLookup sealed={kind === 'sealed'} onPick={pickTcg} />
+          <TcgLookup
+            sealed={kind === 'sealed'}
+            onPick={pickTcg}
+            initialGame={lastGame}
+          />
         )}
         {kind && !source && !tcg && (
           <>
@@ -329,6 +374,21 @@ export default function CollectionNew() {
                 </>
               )}
               <label className="block space-y-1 sm:col-span-2">
+                <span className="label">Group (a deck, a binder…)</span>
+                <select
+                  value={groupId}
+                  onChange={(e) => setGroupId(e.target.value)}
+                  className="input"
+                >
+                  <option value="">None</option>
+                  {groups.data?.map((g) => (
+                    <option key={g.id} value={g.id}>
+                      {g.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block space-y-1 sm:col-span-2">
                 <span className="label">Notes</span>
                 <textarea
                   value={notes}
@@ -420,6 +480,14 @@ export default function CollectionNew() {
               className="btn"
             >
               Cancel
+            </button>
+            <button
+              type="submit"
+              name="another"
+              disabled={!canSave}
+              className="btn px-4 py-2"
+            >
+              Save and add another
             </button>
             <button
               type="submit"

@@ -21,6 +21,8 @@ import {
   text,
   timestamp,
   unique,
+  uniqueIndex,
+  type AnyPgColumn,
 } from 'drizzle-orm/pg-core'
 
 // --- Ledger -----------------------------------------------------------------
@@ -233,6 +235,12 @@ export const items = pgTable(
     // $0 item, so this date is what marks an item as sold.
     soldDate: date('sold_date', { mode: 'string' }),
     saleProceedsCents: bigint('sale_proceeds_cents', { mode: 'number' }),
+    // The collection group (a deck, a binder) this item belongs to, if any.
+    // One group per item. Not to be confused with card_details.group_id,
+    // which is TCGplayer's set. Deleting the group leaves the item, ungrouped.
+    itemGroupId: integer('item_group_id').references(() => itemGroups.id, {
+      onDelete: 'set null',
+    }),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -242,7 +250,29 @@ export const items = pgTable(
     check('items_basis_nonnegative', sql`${t.costBasisCents} >= 0`),
     index('items_acquired_txn_idx').on(t.acquiredTxnId),
     index('items_sold_txn_idx').on(t.soldTxnId),
+    index('items_item_group_idx').on(t.itemGroupId),
   ],
+)
+
+// A named set of items shown as one entity: a deck, a binder, a shelf. Purely
+// an organizing layer: each item keeps its own cost, price and ledger entry,
+// and the group adds them up.
+export const itemGroups = pgTable(
+  'item_groups',
+  {
+    id: integer().primaryKey().generatedAlwaysAsIdentity(),
+    name: text().notNull(),
+    notes: text(),
+    // The picture on its tile. Null = its most valuable item's picture.
+    coverItemId: integer('cover_item_id').references(
+      (): AnyPgColumn => items.id,
+      { onDelete: 'set null' },
+    ),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [uniqueIndex('item_groups_name_unique').on(sql`lower(${t.name})`)],
 )
 
 // Cards and sealed product, priced from TCGCSV (TCGplayer data).
@@ -297,7 +327,8 @@ export const priceSnapshots = pgTable(
 // --- Price sync -------------------------------------------------------------
 
 // tcg: TCGCSV card and sealed prices (daily). games: PriceCharting (weekly).
-export const syncJob = pgEnum('sync_job', ['tcg', 'games'])
+// catalog: the card search index below, from TCGCSV (weekly).
+export const syncJob = pgEnum('sync_job', ['tcg', 'games', 'catalog'])
 // partial: some targets failed, the rest were updated.
 export const syncStatus = pgEnum('sync_status', [
   'running',
@@ -323,4 +354,47 @@ export const syncRuns = pgTable(
     error: text(), // first few failures, one per line
   },
   (t) => [index('sync_runs_job_idx').on(t.job, t.startedAt)],
+)
+
+// --- Card search index --------------------------------------------------------
+// A copy of TCGCSV's product catalog (TCGplayer's sets and products) for the
+// games the app covers, so cards can be found by name without knowing the
+// set. TCGCSV has no search, only one product file per set. Built and
+// refreshed by the `catalog` sync job (lib/pricing/catalog.ts). Prices are not
+// stored here: they're still fetched live, or by the price sync.
+
+export const catalogGroups = pgTable(
+  'catalog_groups',
+  {
+    groupId: integer('group_id').primaryKey(), // TCGplayer set id
+    categoryId: integer('category_id').notNull(),
+    name: text().notNull(),
+    abbreviation: text(), // e.g. RIX; matched against decklist set codes
+    publishedOn: date('published_on', { mode: 'string' }),
+    // TCGCSV's modifiedOn as of the last time this set's products were
+    // indexed. A different value upstream means the set needs re-indexing.
+    modifiedOn: text('modified_on'),
+    productsSyncedAt: timestamp('products_synced_at', { withTimezone: true }),
+  },
+  (t) => [index('catalog_groups_category_idx').on(t.categoryId)],
+)
+
+export const catalogProducts = pgTable(
+  'catalog_products',
+  {
+    productId: integer('product_id').primaryKey(), // TCGplayer product id
+    categoryId: integer('category_id').notNull(),
+    groupId: integer('group_id')
+      .notNull()
+      .references(() => catalogGroups.groupId, { onDelete: 'cascade' }),
+    name: text().notNull(),
+    number: text(), // collector number
+    rarity: text(),
+    imageUrl: text('image_url'),
+    sealed: boolean().notNull(), // no number and no rarity
+  },
+  (t) => [
+    index('catalog_products_name_idx').on(t.categoryId, sql`lower(${t.name})`),
+    index('catalog_products_group_idx').on(t.groupId),
+  ],
 )

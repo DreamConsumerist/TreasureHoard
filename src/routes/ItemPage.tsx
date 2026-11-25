@@ -24,6 +24,7 @@ import {
 import {
   todayLocal,
   useDeleteItem,
+  useGroups,
   useItem,
   useSellItem,
   useUndoSale,
@@ -68,7 +69,12 @@ function EditForm({
   const [quantity, setQuantity] = useState(String(item.quantity))
   const [condition, setCondition] = useState(item.condition ?? '')
   const [notes, setNotes] = useState(item.notes ?? '')
+  const groups = useGroups()
+  const [groupId, setGroupId] = useState(String(item.itemGroup?.id ?? ''))
   const [basis, setBasis] = useState(centsToInput(item.costBasisCents))
+  // Until the cost is typed in, it follows the quantity at the same cost per
+  // unit, so finding another copy doesn't show up as a gain.
+  const [basisTouched, setBasisTouched] = useState(false)
   const [date, setDate] = useState(item.acquiredDate)
   const [price, setPrice] = useState(
     item.unitPriceCents === null ? '' : centsToInput(item.unitPriceCents),
@@ -94,6 +100,9 @@ function EditForm({
         name: name.trim(),
         condition: condition || null,
         notes: notes.trim() || null,
+        ...(groupId !== String(item.itemGroup?.id ?? '') && {
+          itemGroupId: groupId ? Number(groupId) : null,
+        }),
         // Locked once sold; only sent when changed, so other edits never touch the books.
         ...(!sold && qty !== item.quantity && { quantity: qty }),
         ...(!sold &&
@@ -128,7 +137,17 @@ function EditForm({
             type="number"
             min={1}
             value={quantity}
-            onChange={(e) => setQuantity(e.target.value)}
+            onChange={(e) => {
+              setQuantity(e.target.value)
+              const n = Number.parseInt(e.target.value, 10)
+              if (!basisTouched && Number.isInteger(n) && n >= 1) {
+                setBasis(
+                  centsToInput(
+                    Math.round((item.costBasisCents * n) / item.quantity),
+                  ),
+                )
+              }
+            }}
             className="input"
             disabled={sold}
           />
@@ -153,7 +172,21 @@ function EditForm({
         </label>
         <label className="block space-y-1">
           <span className="label">Cost basis (total)</span>
-          <MoneyInput value={basis} onChange={setBasis} disabled={sold} />
+          <MoneyInput
+            value={basis}
+            onChange={(v) => {
+              setBasis(v)
+              setBasisTouched(true)
+            }}
+            disabled={sold}
+          />
+          {!basisTouched && qty !== item.quantity && qty >= 1 && (
+            <span className="block text-xs text-zinc-500">
+              Updated to keep{' '}
+              {formatMoney(Math.round(item.costBasisCents / item.quantity))}{' '}
+              each.
+            </span>
+          )}
         </label>
         <label className="block space-y-1">
           <span className="label">
@@ -166,6 +199,21 @@ function EditForm({
             className="input"
             disabled={sold}
           />
+        </label>
+        <label className="block space-y-1">
+          <span className="label">Group</span>
+          <select
+            value={groupId}
+            onChange={(e) => setGroupId(e.target.value)}
+            className="input"
+          >
+            <option value="">None</option>
+            {groups.data?.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.name}
+              </option>
+            ))}
+          </select>
         </label>
         {manual && (
           <label className="block space-y-1">
@@ -379,6 +427,17 @@ export default function ItemPage() {
           </p>
           {item.condition && (
             <p className="text-sm text-zinc-500">{item.condition}</p>
+          )}
+          {item.itemGroup && (
+            <p className="text-sm">
+              In{' '}
+              <Link
+                to={`/collection/groups/${item.itemGroup.id}`}
+                className="font-medium underline"
+              >
+                {item.itemGroup.name}
+              </Link>
+            </p>
           )}
           {sold && (
             <p className="mt-1 inline-block rounded bg-zinc-200 px-2 py-0.5 text-xs dark:bg-zinc-800">

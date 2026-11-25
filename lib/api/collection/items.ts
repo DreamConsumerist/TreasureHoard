@@ -19,6 +19,7 @@ import {
   accounts,
   cardDetails,
   gameDetails,
+  itemGroups,
   items,
   postings,
   priceSnapshots,
@@ -40,6 +41,7 @@ import {
   itemListQuerySchema,
   itemSellSchema,
   itemUpdateSchema,
+  type ItemCreateParsed,
 } from '../../collection/schemas.ts'
 import type { ItemDetailOut, ItemOut } from '../../collection/types.ts'
 import { validatePostings, type PostingInput } from '../../ledger/postings.ts'
@@ -55,16 +57,22 @@ const likeEscape = (s: string) => s.replace(RECORD_ESCAPE, (ch) => `\\${ch}`)
 /** Items with their details and latest prices. Also used by the dashboard. */
 export async function loadItems(db: Db | Tx, where: SQL[]): Promise<ItemOut[]> {
   const rows = await db
-    .select({ item: items, card: cardDetails, game: gameDetails })
+    .select({
+      item: items,
+      card: cardDetails,
+      game: gameDetails,
+      group: { id: itemGroups.id, name: itemGroups.name },
+    })
     .from(items)
     .leftJoin(cardDetails, eq(cardDetails.itemId, items.id))
     .leftJoin(gameDetails, eq(gameDetails.itemId, items.id))
+    .leftJoin(itemGroups, eq(itemGroups.id, items.itemGroupId))
     .where(and(...where))
     .orderBy(asc(items.name), asc(items.id))
 
   const priceByKey = await latestPrices(db)
 
-  return rows.map(({ item, card, game }) => {
+  return rows.map(({ item, card, game, group }) => {
     const out: Omit<
       ItemOut,
       'unitPriceCents' | 'priceAsOf' | 'weekAgoPriceCents'
@@ -82,6 +90,7 @@ export async function loadItems(db: Db | Tx, where: SQL[]): Promise<ItemOut[]> {
       soldTxnId: item.soldTxnId,
       soldDate: item.soldDate,
       saleProceedsCents: item.saleProceedsCents,
+      itemGroup: group?.id ? { id: group.id, name: group.name } : null,
       card: card
         ? {
             categoryId: card.categoryId,
@@ -113,7 +122,7 @@ export async function loadItems(db: Db | Tx, where: SQL[]): Promise<ItemOut[]> {
   })
 }
 
-async function loadItem(db: Db | Tx, id: number): Promise<ItemOut> {
+export async function loadItem(db: Db | Tx, id: number): Promise<ItemOut> {
   const [item] = await loadItems(db, [eq(items.id, id)])
   if (!item) fail(404, 'Item not found')
   return item
@@ -168,6 +177,192 @@ async function itemsSharingTxn(tx: Tx, txnId: number): Promise<number> {
 const kindAccount = (tx: Tx, kind: ItemKind) =>
   systemAccountId(tx, KIND_ACCOUNT_KEY[kind])
 
+/**
+ * Splits `quantity` copies off an item into a new item (same details, same
+ * acquisition entry and date, the matching share of the cost basis, same
+ * group). Used by a partial sale and by the decklist import. Returns the new
+ * item's id and basis.
+ */
+export async function splitOff(
+  tx: Tx,
+  item: ItemOut,
+  quantity: number,
+): Promise<{ id: number; basisCents: number }> {
+  if (quantity < 1 || quantity >= item.quantity)
+    throw new Error('splitOff needs 1 ≤ quantity < the item’s quantity')
+  const { soldCents, keptCents } = splitBasis(
+    item.costBasisCents,
+    item.quantity,
+    quantity,
+  )
+  await tx
+    .update(items)
+    .set({ quantity: item.quantity - quantity, costBasisCents: keptCents })
+    .where(eq(items.id, item.id))
+  const [copy] = await tx
+    .insert(items)
+    .values({
+      kind: item.kind,
+      name: item.name,
+      quantity,
+      condition: item.condition,
+      notes: item.notes,
+      costBasisCents: soldCents,
+      basisSource: item.basisSource,
+      acquiredDate: item.acquiredDate,
+      acquiredTxnId: item.acquiredTxnId,
+      itemGroupId: item.itemGroup?.id ?? null,
+    })
+    .returning({ id: items.id })
+  if (!copy) throw new Error('Insert returned no row')
+  if (item.card) {
+    await tx.insert(cardDetails).values({
+      itemId: copy.id,
+      categoryId: item.card.categoryId,
+      groupId: item.card.groupId,
+      tcgplayerProductId: item.card.productId,
+      subType: item.card.subType,
+      setName: item.card.setName,
+      number: item.card.number,
+      rarity: item.card.rarity,
+      imageUrl: item.card.imageUrl,
+    })
+  }
+  if (item.game) {
+    await tx.insert(gameDetails).values({
+      itemId: copy.id,
+      platform: item.game.platform,
+      pricechartingUrl: item.game.url,
+      variant: item.game.variant,
+      imageUrl: item.game.imageUrl,
+    })
+  }
+  return { id: copy.id, basisCents: soldCents }
+}
+
+/** Fails with 400 unless the collection group exists. */
+export async function checkItemGroup(db: Db | Tx, id: number) {
+  const [g] = await db
+    .select({ id: itemGroups.id })
+    .from(itemGroups)
+    .where(eq(itemGroups.id, id))
+  if (!g) fail(400, 'That group no longer exists')
+}
+
+/**
+ * Adds one item: its acquisition entry (purchase or opening balance; a $0
+ * basis books nothing), its card or game details, and the price seen at
+ * lookup as its first snapshot. Shared by POST /api/items and the decklist
+ * import, so imported items are identical to hand-entered ones.
+ */
+export async function createItem(
+  tx: Tx,
+  input: ItemCreateParsed,
+): Promise<number> {
+  const acq = input.acquisition
+  const basis = acq.mode === 'purchase' ? acq.costCents : acq.valueCents
+  if (input.itemGroupId) await checkItemGroup(tx, input.itemGroupId)
+
+  let txnId: number | null = null
+  if (basis > 0) {
+    const kindId = await kindAccount(tx, input.kind)
+    if (acq.mode === 'purchase') {
+      await checkCashAccount(tx, acq.fromAccountId)
+      txnId = await insertTxn(
+        tx,
+        {
+          date: acq.date,
+          description: `Bought: ${input.name}`,
+          kind: 'normal',
+        },
+        purchasePostings(kindId, acq.fromAccountId, basis),
+      )
+    } else {
+      const openingId = await systemAccountId(tx, OPENING_BALANCES_KEY)
+      txnId = await insertTxn(
+        tx,
+        {
+          date: acq.date,
+          description: `Opening balance: ${input.name}`,
+          kind: 'opening',
+        },
+        baselinePostings(kindId, openingId, basis),
+      )
+    }
+  }
+
+  const [item] = await tx
+    .insert(items)
+    .values({
+      kind: input.kind,
+      name: input.name,
+      quantity: input.quantity,
+      condition: input.condition ?? null,
+      notes: input.notes ?? null,
+      costBasisCents: basis,
+      basisSource: acq.mode === 'purchase' ? 'purchase' : 'baseline',
+      acquiredDate: acq.date,
+      acquiredTxnId: txnId,
+      itemGroupId: input.itemGroupId ?? null,
+    })
+    .returning({ id: items.id })
+  if (!item) throw new Error('Insert returned no row')
+
+  let card: ItemOut['card'] = null
+  let game: ItemOut['game'] = null
+  if (input.card) {
+    card = {
+      categoryId: input.card.categoryId,
+      groupId: input.card.groupId,
+      productId: input.card.productId,
+      subType: input.card.subType ?? null,
+      setName: input.card.setName,
+      number: input.card.number ?? null,
+      rarity: input.card.rarity ?? null,
+      imageUrl: input.card.imageUrl ?? null,
+    }
+    await tx.insert(cardDetails).values({
+      itemId: item.id,
+      categoryId: card.categoryId,
+      groupId: card.groupId,
+      tcgplayerProductId: card.productId,
+      subType: card.subType,
+      setName: card.setName,
+      number: card.number,
+      rarity: card.rarity,
+      imageUrl: card.imageUrl,
+    })
+  } else if (input.game) {
+    game = {
+      platform: input.game.platform,
+      url: input.game.url ?? null,
+      variant: input.game.variant,
+      imageUrl: input.game.imageUrl ?? null,
+    }
+    await tx.insert(gameDetails).values({
+      itemId: item.id,
+      platform: game.platform,
+      pricechartingUrl: game.url,
+      variant: game.variant,
+      imageUrl: game.imageUrl,
+    })
+  }
+
+  if (input.observedPrice) {
+    const key = priceKeyFor({ id: item.id, card, game })
+    // A lookup price for a shared product never overwrites what's already
+    // recorded for that day; a manual price belongs to this item alone.
+    await recordSnapshot(
+      tx,
+      key,
+      input.observedPrice.priceCents,
+      input.observedPrice.asOf,
+      key.source === 'manual',
+    )
+  }
+  return item.id
+}
+
 // --- Routes ------------------------------------------------------------------
 
 export function itemRoutes(db: Db) {
@@ -180,6 +375,9 @@ export function itemRoutes(db: Db) {
     ]
     if (q.kind) where.push(eq(items.kind, q.kind))
     if (q.q) where.push(ilike(items.name, `%${likeEscape(q.q)}%`))
+    if (q.itemGroup === 'none') where.push(isNull(items.itemGroupId))
+    else if (q.itemGroup !== undefined)
+      where.push(eq(items.itemGroupId, q.itemGroup))
     return c.json(await loadItems(db, where))
   })
 
@@ -208,108 +406,7 @@ export function itemRoutes(db: Db) {
   // owned (opening entry at today's value). A $0 basis books nothing.
   r.post('/', validate('json', itemCreateSchema), async (c) => {
     const input = c.req.valid('json')
-    const acq = input.acquisition
-    const basis = acq.mode === 'purchase' ? acq.costCents : acq.valueCents
-
-    const id = await db.transaction(async (tx) => {
-      let txnId: number | null = null
-      if (basis > 0) {
-        const kindId = await kindAccount(tx, input.kind)
-        if (acq.mode === 'purchase') {
-          await checkCashAccount(tx, acq.fromAccountId)
-          txnId = await insertTxn(
-            tx,
-            {
-              date: acq.date,
-              description: `Bought: ${input.name}`,
-              kind: 'normal',
-            },
-            purchasePostings(kindId, acq.fromAccountId, basis),
-          )
-        } else {
-          const openingId = await systemAccountId(tx, OPENING_BALANCES_KEY)
-          txnId = await insertTxn(
-            tx,
-            {
-              date: acq.date,
-              description: `Opening balance: ${input.name}`,
-              kind: 'opening',
-            },
-            baselinePostings(kindId, openingId, basis),
-          )
-        }
-      }
-
-      const [item] = await tx
-        .insert(items)
-        .values({
-          kind: input.kind,
-          name: input.name,
-          quantity: input.quantity,
-          condition: input.condition ?? null,
-          notes: input.notes ?? null,
-          costBasisCents: basis,
-          basisSource: acq.mode === 'purchase' ? 'purchase' : 'baseline',
-          acquiredDate: acq.date,
-          acquiredTxnId: txnId,
-        })
-        .returning({ id: items.id })
-      if (!item) throw new Error('Insert returned no row')
-
-      let card: ItemOut['card'] = null
-      let game: ItemOut['game'] = null
-      if (input.card) {
-        card = {
-          categoryId: input.card.categoryId,
-          groupId: input.card.groupId,
-          productId: input.card.productId,
-          subType: input.card.subType ?? null,
-          setName: input.card.setName,
-          number: input.card.number ?? null,
-          rarity: input.card.rarity ?? null,
-          imageUrl: input.card.imageUrl ?? null,
-        }
-        await tx.insert(cardDetails).values({
-          itemId: item.id,
-          categoryId: card.categoryId,
-          groupId: card.groupId,
-          tcgplayerProductId: card.productId,
-          subType: card.subType,
-          setName: card.setName,
-          number: card.number,
-          rarity: card.rarity,
-          imageUrl: card.imageUrl,
-        })
-      } else if (input.game) {
-        game = {
-          platform: input.game.platform,
-          url: input.game.url ?? null,
-          variant: input.game.variant,
-          imageUrl: input.game.imageUrl ?? null,
-        }
-        await tx.insert(gameDetails).values({
-          itemId: item.id,
-          platform: game.platform,
-          pricechartingUrl: game.url,
-          variant: game.variant,
-          imageUrl: game.imageUrl,
-        })
-      }
-
-      if (input.observedPrice) {
-        const key = priceKeyFor({ id: item.id, card, game })
-        // A lookup price for a shared product never overwrites what's already
-        // recorded for that day; a manual price belongs to this item alone.
-        await recordSnapshot(
-          tx,
-          key,
-          input.observedPrice.priceCents,
-          input.observedPrice.asOf,
-          key.source === 'manual',
-        )
-      }
-      return item.id
-    })
+    const id = await db.transaction((tx) => createItem(tx, input))
     return c.json(await loadItem(db, id), 201)
   })
 
@@ -415,7 +512,21 @@ export function itemRoutes(db: Db) {
           .where(eq(transactions.id, current.txnId))
       }
 
+      if (input.itemGroupId) await checkItemGroup(tx, input.itemGroupId)
+      if (
+        input.itemGroupId !== undefined &&
+        input.itemGroupId !== (item.itemGroup?.id ?? null)
+      ) {
+        // Leaving a group: it stops being that group's cover.
+        await tx
+          .update(itemGroups)
+          .set({ coverItemId: null })
+          .where(eq(itemGroups.coverItemId, id))
+      }
       const changes = {
+        ...(input.itemGroupId !== undefined && {
+          itemGroupId: input.itemGroupId,
+        }),
         ...(input.name !== undefined && { name: input.name }),
         ...(input.quantity !== undefined && { quantity: input.quantity }),
         ...(input.condition !== undefined && { condition: input.condition }),
@@ -490,57 +601,9 @@ export function itemRoutes(db: Db) {
       let targetId = id
       let basis = item.costBasisCents
       if (input.quantity < item.quantity) {
-        const { soldCents, keptCents } = splitBasis(
-          item.costBasisCents,
-          item.quantity,
-          input.quantity,
-        )
-        await tx
-          .update(items)
-          .set({
-            quantity: item.quantity - input.quantity,
-            costBasisCents: keptCents,
-          })
-          .where(eq(items.id, id))
-        const [copy] = await tx
-          .insert(items)
-          .values({
-            kind: item.kind,
-            name: item.name,
-            quantity: input.quantity,
-            condition: item.condition,
-            notes: item.notes,
-            costBasisCents: soldCents,
-            basisSource: item.basisSource,
-            acquiredDate: item.acquiredDate,
-            acquiredTxnId: item.acquiredTxnId,
-          })
-          .returning({ id: items.id })
-        if (!copy) throw new Error('Insert returned no row')
+        const copy = await splitOff(tx, item, input.quantity)
         targetId = copy.id
-        basis = soldCents
-        if (item.card) {
-          await tx.insert(cardDetails).values({
-            itemId: copy.id,
-            categoryId: item.card.categoryId,
-            groupId: item.card.groupId,
-            tcgplayerProductId: item.card.productId,
-            subType: item.card.subType,
-            setName: item.card.setName,
-            number: item.card.number,
-            rarity: item.card.rarity,
-            imageUrl: item.card.imageUrl,
-          })
-        }
-        if (item.game) {
-          await tx.insert(gameDetails).values({
-            itemId: copy.id,
-            platform: item.game.platform,
-            pricechartingUrl: item.game.url,
-            variant: item.game.variant,
-            imageUrl: item.game.imageUrl,
-          })
-        }
+        basis = copy.basisCents
       }
 
       const lines = salePostings({

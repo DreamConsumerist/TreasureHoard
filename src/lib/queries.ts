@@ -31,12 +31,17 @@ import type {
 } from '../../lib/ledger/types.ts'
 import type { ItemKind } from '../../lib/collection/accounting.ts'
 import type {
+  GroupCreate,
+  GroupUpdate,
   ItemCreate,
   ItemSell,
   ItemUpdate,
 } from '../../lib/collection/schemas.ts'
 import type {
+  CatalogSearchOut,
   CollectionCheck,
+  GroupDetailOut,
+  GroupOut,
   ItemDetailOut,
   ItemOut,
   PriceChartingLookupOut,
@@ -47,7 +52,14 @@ import type { SyncJobStatus } from '../../lib/pricing/types.ts'
 import { api } from './api.ts'
 
 export type GameKey = 'mtg' | 'onepiece' | 'riftbound'
-export type { ItemDetailOut, ItemOut, SyncJobStatus, TcgProductOut }
+export type {
+  GroupDetailOut,
+  GroupOut,
+  ItemDetailOut,
+  ItemOut,
+  SyncJobStatus,
+  TcgProductOut,
+}
 
 export type { DashboardData, RecurringTemplateOut, TransactionOut }
 
@@ -158,6 +170,8 @@ function useLedgerMutation<TVars, TResult>(
         'collection-check',
         'price-status',
         'recurring',
+        'groups',
+        'group',
       ]) {
         void qc.invalidateQueries({ queryKey: [key] })
       }
@@ -314,6 +328,25 @@ export function useTcgProducts(game: GameKey | null, groupId: number | null) {
   })
 }
 
+/** Name search across every set (the card search index). */
+export function useCatalogSearch(
+  game: GameKey | null,
+  q: string,
+  sealed?: boolean,
+) {
+  return useQuery({
+    queryKey: ['catalog-search', game, q, sealed],
+    queryFn: () => {
+      const params = new URLSearchParams({ game: game!, q })
+      if (sealed !== undefined) params.set('sealed', String(sealed))
+      return api<CatalogSearchOut>(`/catalog/tcg/search?${params}`)
+    },
+    enabled: game !== null && q.trim().length >= 2,
+    placeholderData: (prev) => prev, // keep results while typing
+    staleTime: 5 * 60_000,
+  })
+}
+
 export const usePriceChartingLookup = () =>
   useMutation({
     mutationFn: (url: string) =>
@@ -346,6 +379,43 @@ export const useUndoSale = () =>
 export const useDeleteItem = () =>
   useLedgerMutation((id: number) => api(`/items/${id}`, { method: 'DELETE' }))
 
+// --- Collection groups ---
+
+export function useGroups() {
+  return useQuery({
+    queryKey: ['groups'],
+    queryFn: () => api<GroupOut[]>('/groups'),
+  })
+}
+
+export function useGroup(id: number) {
+  return useQuery({
+    queryKey: ['group', id],
+    queryFn: () => api<GroupDetailOut>(`/groups/${id}`),
+  })
+}
+
+export const useCreateGroup = () =>
+  useLedgerMutation((body: GroupCreate) =>
+    api<GroupDetailOut>('/groups', { method: 'POST', ...json(body) }),
+  )
+
+export const useUpdateGroup = () =>
+  useLedgerMutation(({ id, ...body }: GroupUpdate & { id: number }) =>
+    api<GroupDetailOut>(`/groups/${id}`, { method: 'PATCH', ...json(body) }),
+  )
+
+export const useDeleteGroup = () =>
+  useLedgerMutation((id: number) => api(`/groups/${id}`, { method: 'DELETE' }))
+
+export const useAddToGroup = () =>
+  useLedgerMutation(({ id, itemIds }: { id: number; itemIds: number[] }) =>
+    api<GroupDetailOut>(`/groups/${id}/items`, {
+      method: 'POST',
+      ...json({ itemIds }),
+    }),
+  )
+
 // --- Price sync ---
 
 /**
@@ -364,7 +434,14 @@ export function usePriceStatus() {
   const wasRunning = useRef(running)
   useEffect(() => {
     if (wasRunning.current && !running) {
-      for (const key of ['items', 'item', 'dashboard'])
+      for (const key of [
+        'items',
+        'item',
+        'dashboard',
+        'groups',
+        'group',
+        'catalog-search',
+      ])
         void qc.invalidateQueries({ queryKey: [key] })
     }
     wasRunning.current = running
@@ -375,7 +452,7 @@ export function usePriceStatus() {
 export function useStartSync() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (job: 'tcg' | 'games') =>
+    mutationFn: (job: 'tcg' | 'games' | 'catalog') =>
       api<{ runId: number }>('/prices/sync', {
         method: 'POST',
         ...json({ job }),

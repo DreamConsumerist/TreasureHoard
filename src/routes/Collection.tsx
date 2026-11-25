@@ -1,22 +1,42 @@
 // /collection: owned (or sold) items with cost, value and gain.
+//
+// Grouped view (owned items only) shows each collection group (a deck, a
+// binder) as one tile, then the items that aren't in a group. Individual view
+// shows every item. Select mode ticks items to put them in a group.
 
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router'
 import { ITEM_KINDS, type ItemKind } from '../../lib/collection/accounting.ts'
+import type { GroupOut } from '../../lib/collection/types.ts'
+import { AddToGroup } from '../components/AddToGroup.tsx'
 import { Amount } from '../components/Amount.tsx'
+import { GroupList } from '../components/GroupTile.tsx'
 import { GainBadge, ItemList, type ItemView } from '../components/ItemList.tsx'
 import { itemGain, itemValue, KIND_LABELS } from '../lib/collection.ts'
 import { useDebounced } from '../lib/hooks.ts'
-import { useItems, type ItemOut } from '../lib/queries.ts'
+import { useGroups, useItems, type ItemOut } from '../lib/queries.ts'
 import { weekChangeCents } from '../../lib/collection/valuation.ts'
 
 type Sort = 'value' | 'gain' | 'movers' | 'name' | 'date'
+type Grouping = 'grouped' | 'individual'
 
-// The tiles/list choice is remembered per browser; it's display-only, so it
-// doesn't belong in the database.
+// Display choices are remembered per browser; they're display-only, so they
+// don't belong in the database.
 const VIEW_KEY = 'treasurehoard.collectionView'
 const savedView = (): ItemView =>
   localStorage.getItem(VIEW_KEY) === 'list' ? 'list' : 'tiles'
+const GROUPING_KEY = 'treasurehoard.collectionGrouping'
+const savedGrouping = (): Grouping =>
+  localStorage.getItem(GROUPING_KEY) === 'individual' ? 'individual' : 'grouped'
+
+const groupSorters: Record<Sort, (a: GroupOut, b: GroupOut) => number> = {
+  value: (a, b) => b.marketCents - a.marketCents,
+  gain: (a, b) => b.marketCents - b.costCents - (a.marketCents - a.costCents),
+  movers: (a, b) =>
+    Math.abs(b.weekChangeCents ?? -1) - Math.abs(a.weekChangeCents ?? -1),
+  name: (a, b) => a.name.localeCompare(b.name),
+  date: (a, b) => a.name.localeCompare(b.name),
+}
 
 /** Size of the 7-day move either way; -1 (sorts last) without a week of history. */
 const moveSize = (i: ItemOut) => {
@@ -44,13 +64,48 @@ export default function Collection() {
     setViewState(v)
     localStorage.setItem(VIEW_KEY, v)
   }
+  const [grouping, setGroupingState] = useState<Grouping>(savedGrouping)
+  const setGrouping = (g: Grouping) => {
+    setGroupingState(g)
+    localStorage.setItem(GROUPING_KEY, g)
+  }
+  // Select mode: the ticked item ids, or null when not selecting.
+  const [selected, setSelected] = useState<Set<number> | null>(null)
+  const [choosingGroup, setChoosingGroup] = useState(false)
   const q = useDebounced(search.trim())
   const list = useItems({ status, kind, q: q || undefined })
+  const groupList = useGroups()
 
   const items = useMemo(
     () => [...(list.data ?? [])].sort(sorters[sort]),
     [list.data, sort],
   )
+  // Selecting works on individual items, and sold items stay individual.
+  const grouped =
+    grouping === 'grouped' && status === 'owned' && selected === null
+  // Groups with at least one item matching the filters (all of them when
+  // there are no filters), so filtering never hides a matching card.
+  const shownGroups = useMemo(() => {
+    if (!grouped) return []
+    const matching = new Set(items.map((i) => i.itemGroup?.id))
+    const filtered = !kind && !q
+    return [...(groupList.data ?? [])]
+      .filter((g) => (filtered ? true : matching.has(g.id)))
+      .sort(groupSorters[sort])
+  }, [grouped, items, kind, q, groupList.data, sort])
+  const shownItems = grouped ? items.filter((i) => !i.itemGroup) : items
+
+  const toggle = (id: number) =>
+    setSelected((s) => {
+      const next = new Set(s)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  const stopSelecting = () => {
+    setSelected(null)
+    setChoosingGroup(false)
+  }
   const totals = useMemo(() => {
     let cost = 0
     let value = 0
@@ -79,12 +134,67 @@ export default function Collection() {
 
   return (
     <div>
-      <header className="mb-4 flex items-center justify-between">
+      <header className="mb-4 flex items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">Collection</h1>
-        <Link to="/collection/new" className="btn-primary">
-          + Add item
-        </Link>
+        <div className="flex gap-2">
+          {status === 'owned' && selected === null && (
+            <button
+              type="button"
+              className="btn"
+              onClick={() => setSelected(new Set())}
+            >
+              Select
+            </button>
+          )}
+          <Link to="/collection/import" className="btn">
+            Import decklist
+          </Link>
+          <Link to="/collection/new" className="btn-primary">
+            + Add item
+          </Link>
+        </div>
       </header>
+
+      {selected !== null && (
+        <div className="card sticky top-2 z-20 mb-4 space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-sm">
+              {selected.size} selected
+              {selected.size < items.length && (
+                <button
+                  type="button"
+                  className="ml-2 text-zinc-500 underline"
+                  onClick={() => setSelected(new Set(items.map((i) => i.id)))}
+                >
+                  Select all {items.length}
+                </button>
+              )}
+            </span>
+            {!choosingGroup && (
+              <span className="flex gap-2">
+                <button
+                  type="button"
+                  className="btn-primary"
+                  disabled={selected.size === 0}
+                  onClick={() => setChoosingGroup(true)}
+                >
+                  Add to group…
+                </button>
+                <button type="button" className="btn" onClick={stopSelecting}>
+                  Done
+                </button>
+              </span>
+            )}
+          </div>
+          {choosingGroup && (
+            <AddToGroup
+              itemIds={[...selected]}
+              onDone={stopSelecting}
+              onCancel={() => setChoosingGroup(false)}
+            />
+          )}
+        </div>
+      )}
 
       <div className="mb-3 flex gap-1">
         {(['owned', 'sold'] as const).map((s) => (
@@ -93,6 +203,7 @@ export default function Collection() {
             onClick={() => {
               setStatus(s)
               if (s === 'sold' && sort === 'movers') setSort('value')
+              if (s === 'sold') stopSelecting()
             }}
             className={`rounded-lg px-3 py-1.5 text-sm ${status === s ? 'bg-zinc-200 font-medium dark:bg-zinc-800' : 'text-zinc-600 dark:text-zinc-400'}`}
           >
@@ -160,6 +271,25 @@ export default function Collection() {
             </button>
           ))}
         </div>
+        {status === 'owned' && (
+          <div className="flex overflow-hidden rounded-lg border border-zinc-300 text-sm dark:border-zinc-700">
+            {(['grouped', 'individual'] as const).map((g) => (
+              <button
+                key={g}
+                type="button"
+                onClick={() => setGrouping(g)}
+                aria-pressed={grouping === g}
+                className={`px-3 py-1 ${
+                  grouping === g
+                    ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
+                    : ''
+                }`}
+              >
+                {g === 'grouped' ? 'Grouped' : 'Individual'}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {items.length > 0 && (
@@ -198,15 +328,24 @@ export default function Collection() {
       {list.isPending ? (
         <p className="text-sm text-zinc-500">Loading…</p>
       ) : (
-        <ItemList
-          items={items}
-          view={view}
-          empty={
-            status === 'owned'
-              ? 'Nothing here yet. Add your first item.'
-              : 'Nothing sold yet.'
-          }
-        />
+        <div className="space-y-3">
+          <GroupList groups={shownGroups} view={view} />
+          {!(shownGroups.length > 0 && shownItems.length === 0) && (
+            <ItemList
+              items={shownItems}
+              view={view}
+              showGroup={!grouped}
+              selection={selected === null ? undefined : { selected, toggle }}
+              empty={
+                status === 'sold'
+                  ? 'Nothing sold yet.'
+                  : items.length > 0
+                    ? 'Everything here is in a group.'
+                    : 'Nothing here yet. Add your first item.'
+              }
+            />
+          )}
+        </div>
       )}
     </div>
   )

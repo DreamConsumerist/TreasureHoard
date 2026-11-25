@@ -12,7 +12,7 @@ export interface SyncRunOut {
 }
 
 export interface SyncJobStatus {
-  job: 'tcg' | 'games'
+  job: 'tcg' | 'games' | 'catalog'
   /** Whether you own anything this job prices. */
   hasTargets: boolean
   last: SyncRunOut | null

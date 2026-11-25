@@ -75,6 +75,25 @@ export function parsePriceChartingPage(html: string): PriceChartingPage {
  * Validates and normalizes a pasted PriceCharting product URL. Returns the
  * canonical URL and the platform slug from its path, or null if it isn't one.
  */
+/**
+ * One path segment in a single canonical spelling, so the same product always
+ * gets the same price key: decoded, lowercased, then strictly re-encoded.
+ * encodeURIComponent leaves ! ' ( ) * alone, but PriceCharting writes ' as
+ * %27, so those are encoded too. Null if the segment's encoding is broken.
+ */
+function canonicalSegment(segment: string): string | null {
+  let decoded: string
+  try {
+    decoded = decodeURIComponent(segment)
+  } catch {
+    return null
+  }
+  return encodeURIComponent(decoded.toLowerCase()).replace(
+    /[!'()*]/g,
+    (ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`,
+  )
+}
+
 export function normalizePriceChartingUrl(
   input: string,
 ): { url: string; path: string; platform: string } | null {
@@ -90,14 +109,15 @@ export function normalizePriceChartingUrl(
     u.hostname !== 'pricecharting.com'
   )
     return null
-  const match = /^\/game\/([a-z0-9-]+)\/([a-z0-9-]+)\/?$/i.exec(u.pathname)
+  // Any characters within the two path segments: product slugs can carry
+  // punctuation, e.g. clive-barker%27s-hellraiser-revival.
+  const match = /^\/game\/([^/]+)\/([^/]+)\/?$/.exec(u.pathname)
   if (!match) return null
-  const path = `/game/${match[1]!.toLowerCase()}/${match[2]!.toLowerCase()}`
-  return {
-    url: `https://www.pricecharting.com${path}`,
-    path,
-    platform: match[1]!.toLowerCase(),
-  }
+  const platform = canonicalSegment(match[1]!)
+  const product = canonicalSegment(match[2]!)
+  if (!platform || !product) return null
+  const path = `/game/${platform}/${product}`
+  return { url: `https://www.pricecharting.com${path}`, path, platform }
 }
 
 /** "nintendo-3ds" → "Nintendo 3DS" (a best guess; the user can edit it). */

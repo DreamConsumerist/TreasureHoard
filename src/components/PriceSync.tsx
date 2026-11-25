@@ -21,6 +21,12 @@ const JOB_LABELS = {
     schedule: 'weekly (Mondays)',
     unit: 'page',
   },
+  catalog: {
+    name: 'Card search index',
+    source: 'TCGCSV',
+    schedule: 'weekly (Mondays), changed sets only',
+    unit: 'set',
+  },
 } as const
 
 const when = (iso: string) =>
